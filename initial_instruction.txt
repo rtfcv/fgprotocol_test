@@ -1,0 +1,21 @@
+create a test JSBSIM proj to test flightgear udp api on cxx code.
+you should use cmake for build/config tool
+it would be ported to visual studio later but this computer only has gcc
+and a runner script that does jsbsim launch for this purpose
+
+it shall have bare minimum function of:
+- inputting predetermined, hardcoded control input.
+- retrieving telemetry. and printing
+
+its main purpose is to demonstrate absolute minimum on how
+cpp program and jsbsim can establish communication.
+
+every addition(control input and print telem) should not shadow that.
+
+prefereably use models/executables etc. from preexisting flightgear installation
+C:\Program Files\FlightGear 2024.1\
+
+custom model or xml script should be kept as minimum
+
+# future addition in scope
+ability to send udp stream to fgfs.exe

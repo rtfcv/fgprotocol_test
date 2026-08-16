@@ -29,10 +29,15 @@ struct Controls {
 
 // Pure, hardcoded, and the entire demo control schedule:
 //   t <  5s : neutral
-//   t < 15s : elevator -0.15 (nose down input)
-//   t < 25s : elevator -0.15, aileron +0.30 (roll in)
+//   t < 15s : elevator -0.06 (pitches the nose up, given this aircraft's
+//             Cmde sign in aircraft/minimal/minimal.xml)
+//   t < 25s : elevator -0.06, aileron +0.12 (rolls in)
 //   t >=25s : neutral
-// Every value stays within JSBSim's expected [-1, 1] *-cmd-norm range.
+// Every value stays within JSBSim's expected [-1, 1] *-cmd-norm range. Kept
+// deliberately mild: aircraft/minimal/minimal.xml has no stall or angle
+// limiting, so a large sustained deflection can walk this aircraft's alpha
+// or bank angle out past where its (also deliberately simple) linear
+// aerodynamics stay physically sane.
 Controls controlsAt(double t);
 
 // Builds one FGUDPInputSocket datagram: "timestamp,v1,v2,v3\n", matching

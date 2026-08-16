@@ -12,10 +12,10 @@ Controls controlsAt(double t) {
     if (t < 5.0) {
         // neutral
     } else if (t < 15.0) {
-        c.elevator = -0.15;
+        c.elevator = -0.06;
     } else if (t < 25.0) {
-        c.elevator = -0.15;
-        c.aileron = 0.30;
+        c.elevator = -0.06;
+        c.aileron = 0.12;
     } else {
         // back to neutral
     }

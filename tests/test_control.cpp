@@ -55,25 +55,25 @@ int main() {
     // [5s, 15s): elevator down, aileron still neutral.
     {
         control::Controls c = control::controlsAt(5.0);
-        CHECK_NEAR(c.elevator, -0.15, 1e-9);
+        CHECK_NEAR(c.elevator, -0.06, 1e-9);
         CHECK_NEAR(c.aileron, 0.0, 1e-9);
     }
     {
         control::Controls c = control::controlsAt(14.999);
-        CHECK_NEAR(c.elevator, -0.15, 1e-9);
+        CHECK_NEAR(c.elevator, -0.06, 1e-9);
         CHECK_NEAR(c.aileron, 0.0, 1e-9);
     }
 
     // [15s, 25s): elevator still down, aileron rolled in.
     {
         control::Controls c = control::controlsAt(15.0);
-        CHECK_NEAR(c.elevator, -0.15, 1e-9);
-        CHECK_NEAR(c.aileron, 0.30, 1e-9);
+        CHECK_NEAR(c.elevator, -0.06, 1e-9);
+        CHECK_NEAR(c.aileron, 0.12, 1e-9);
     }
     {
         control::Controls c = control::controlsAt(24.999);
-        CHECK_NEAR(c.elevator, -0.15, 1e-9);
-        CHECK_NEAR(c.aileron, 0.30, 1e-9);
+        CHECK_NEAR(c.elevator, -0.06, 1e-9);
+        CHECK_NEAR(c.aileron, 0.12, 1e-9);
     }
 
     // >=25s: back to neutral.
@@ -102,7 +102,7 @@ int main() {
 
     {
         double lastTimestamp = -1.0;
-        control::Controls c{-0.15, 0.30, 0.0};
+        control::Controls c{-0.06, 0.12, 0.0};
         std::string d = control::buildDatagram(c, 1.0, lastTimestamp);
 
         // Must end in exactly one trailing newline.
@@ -115,8 +115,8 @@ int main() {
         CHECK_EQ(fields.size(), control::kControlProperties.size() + 1);
 
         CHECK_NEAR(std::stod(fields[0]), 1.0, 1e-9);
-        CHECK_NEAR(std::stod(fields[1]), -0.15, 1e-6); // elevator
-        CHECK_NEAR(std::stod(fields[2]), 0.30, 1e-6);  // aileron
+        CHECK_NEAR(std::stod(fields[1]), -0.06, 1e-6); // elevator
+        CHECK_NEAR(std::stod(fields[2]), 0.12, 1e-6);  // aileron
         CHECK_NEAR(std::stod(fields[3]), 0.0, 1e-6);   // rudder
     }
 

@@ -171,6 +171,12 @@
         </axis>
 
         <axis name="PITCH">
+            <!-- Static pitch stability and pitch-rate damping are both
+                 stronger than a real light GA aircraft's, on purpose: this
+                 model has no stall or alpha limiting, so it needs to settle
+                 back toward trim quickly rather than let alpha wander into
+                 territory the (deliberately simple) linear lift/drag above
+                 stops making physical sense in. -->
             <function name="aero/coefficient/Cmalpha">
                 <description>Pitch_moment_due_to_alpha</description>
                 <product>
@@ -178,7 +184,7 @@
                     <property>metrics/Sw-sqft</property>
                     <property>metrics/cbarw-ft</property>
                     <property>aero/alpha-rad</property>
-                    <value>-1.0</value>
+                    <value>-2.0</value>
                 </product>
             </function>
             <function name="aero/coefficient/Cmq">
@@ -189,7 +195,7 @@
                     <property>metrics/cbarw-ft</property>
                     <property>aero/ci2vel</property>
                     <property>velocities/q-aero-rad_sec</property>
-                    <value>-12.0</value>
+                    <value>-25.0</value>
                 </product>
             </function>
             <function name="aero/coefficient/Cmde">
@@ -205,6 +211,26 @@
         </axis>
 
         <axis name="ROLL">
+            <!-- Clbeta (dihedral effect) below is what the first draft of
+                 this model was missing entirely: with no roll restoring
+                 force tied to sideslip, aileron input had nothing to check
+                 it and a held roll command span up into an unbounded spiral
+                 (confirmed by running it: roll rate never stopped growing,
+                 airspeed and altitude eventually diverged to nonsense
+                 values and JSBSim stopped responding around 45s in).
+                 Clp (damping) is also well above a real light GA aircraft's
+                 for the same reason PITCH's Cmq is: no stall modeling means
+                 this needs to settle quickly, not realistically. -->
+            <function name="aero/coefficient/Clbeta">
+                <description>Roll_moment_due_to_sideslip_dihedral_effect</description>
+                <product>
+                    <property>aero/qbar-psf</property>
+                    <property>metrics/Sw-sqft</property>
+                    <property>metrics/bw-ft</property>
+                    <property>aero/beta-rad</property>
+                    <value>-0.10</value>
+                </product>
+            </function>
             <function name="aero/coefficient/Clp">
                 <description>Roll_moment_due_to_roll_rate</description>
                 <product>
@@ -213,7 +239,7 @@
                     <property>metrics/bw-ft</property>
                     <property>aero/bi2vel</property>
                     <property>velocities/p-aero-rad_sec</property>
-                    <value>-0.4</value>
+                    <value>-1.2</value>
                 </product>
             </function>
             <function name="aero/coefficient/Clda">
@@ -223,12 +249,26 @@
                     <property>metrics/Sw-sqft</property>
                     <property>metrics/bw-ft</property>
                     <property>fcs/aileron-pos-rad</property>
-                    <value>0.15</value>
+                    <value>0.10</value>
                 </product>
             </function>
         </axis>
 
         <axis name="YAW">
+            <!-- Cnbeta (weathervane stability) pairs with ROLL's Clbeta:
+                 together they're what turns an aileron input into a
+                 bounded, eventually-recovering bank instead of a spiral
+                 divergence. See the ROLL axis comment above. -->
+            <function name="aero/coefficient/Cnbeta">
+                <description>Yaw_moment_due_to_sideslip_weathervane_stability</description>
+                <product>
+                    <property>aero/qbar-psf</property>
+                    <property>metrics/Sw-sqft</property>
+                    <property>metrics/bw-ft</property>
+                    <property>aero/beta-rad</property>
+                    <value>0.12</value>
+                </product>
+            </function>
             <function name="aero/coefficient/Cnr">
                 <description>Yaw_moment_due_to_yaw_rate</description>
                 <product>
@@ -237,7 +277,7 @@
                     <property>metrics/bw-ft</property>
                     <property>aero/bi2vel</property>
                     <property>velocities/r-aero-rad_sec</property>
-                    <value>-0.15</value>
+                    <value>-0.60</value>
                 </product>
             </function>
             <function name="aero/coefficient/Cndr">

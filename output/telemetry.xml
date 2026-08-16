@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    JSBSim standalone output directive file, modelled directly on JSBSim's
+    own data_output/flightgear.xml. Passed to JSBSim.exe on the command
+    line as a logdirectivefile argument (run_jsbsim.ps1 does this by
+    default; see ../README.md for the exact invocation) rather than
+    declared inside the aircraft or the run script; see
+    ../aircraft/minimal/minimal.xml's header comment for why.
+
+    This is JSBSim's real FlightGear native-fdm binary protocol (FGNetFDM
+    v24, 408 bytes, big-endian), the same wire format src/net_fdm.h
+    decodes, not JSBSim's ASCII CSV output type SOCKET.
+
+    Port 5500 is read by jsbsim_tester.exe (see src/main.cpp,
+    kTelemetryPort). See output/fgfs.xml for the second copy of this
+    stream, port 5510, meant for a real fgfs.exe 3D view instead.
+-->
+<output name="localhost" type="FLIGHTGEAR" protocol="UDP" port="5500" rate="30">
+</output>

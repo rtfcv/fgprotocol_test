@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Second copy of output/telemetry.xml's FGNetFDM stream, port 5510, for a
+    real fgfs.exe to render this flight in 3D alongside jsbsim_tester.exe.
+    Add it to the JSBSim.exe command line as a second logdirectivefile
+    argument (run_jsbsim.ps1's -Fgfs switch does this). One JSBSim run can
+    feed both ports the identical packet.
+
+    See ../README.md for the exact fgfs.exe command line to pair with this
+    (fdm=external, native-fdm pointed at UDP port 5510). See
+    output/telemetry.xml for what the fields mean; this file only differs
+    from it in the port number.
+-->
+<output name="localhost" type="FLIGHTGEAR" protocol="UDP" port="5510" rate="30">
+</output>

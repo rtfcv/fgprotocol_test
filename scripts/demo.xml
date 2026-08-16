@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="http://jsbsim.sourceforge.net/JSBSim.xsl"?>
+<!-- JSBSim run script for jsbsim_tester. Says which aircraft to fly and for
+     how long, and opens JSBSim's UDP control input; the only two things a
+     run script can carry that a standalone output directive file can't
+     (see ../output/telemetry.xml and ../output/fgfs.xml for the other
+     half, the telemetry outputs, kept out of this file and out of the
+     aircraft on purpose; see ../README.md for exactly how those get passed
+     to JSBSim.exe). No events: the flight is entirely driven by whatever
+     jsbsim_tester.exe sends over the input below, not scripted here. -->
+<runscript name="jsbsim_tester demo">
+    <description>
+        Minimal end-to-end JSBSim to UDP demo. Run alongside
+        jsbsim_tester.exe (reads this file's input port) and, optionally,
+        fgfs.exe (reads ../output/fgfs.xml's port for a 3D view).
+    </description>
+
+    <use aircraft="minimal" initialize="cruise"/>
+
+    <!-- Must stay in the same order as control::kControlProperties in
+         ../src/control.h; run jsbsim_tester.exe with the print-input-xml
+         flag to regenerate this block from that array if either one changes.
+         type="QTJSBSIM", not "UDP": JSBSim's input factory only recognizes
+         SOCKET/QTJSBSIM/NONE. "UDP" is accepted silently and creates no
+         reader at all. -->
+    <input type="QTJSBSIM" port="5501" rate="30">
+        <property> fcs/elevator-cmd-norm </property>
+        <property> fcs/aileron-cmd-norm  </property>
+        <property> fcs/rudder-cmd-norm   </property>
+    </input>
+
+    <run start="0" end="120" dt="0.008333">
+    </run>
+</runscript>

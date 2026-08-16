@@ -1,0 +1,256 @@
+<?xml version="1.0"?>
+<?xml-stylesheet type="text/xsl" href="http://jsbsim.sourceforge.net/JSBSim.xsl"?>
+<!-- "minimal": a small, entirely hand-written JSBSim aircraft whose only
+     job is to fly well enough, and respond to elevator/aileron/rudder
+     input clearly enough, to demonstrate the UDP link in ../../src/main.cpp.
+     It is not a model of any real airframe; masses, inertias, and
+     aerodynamic derivatives below are round, physically-plausible numbers
+     for a small GA-sized aircraft, not measured data.
+
+     Deliberately excluded, because none of it matters to what this repo
+     demonstrates: <propulsion> (starts already at cruise airspeed and just
+     glides; see scripts/demo.xml's initial conditions), ground handling
+     (ground_reactions has a single token contact point, unused after the
+     airborne start), and any FlightGear-side <system> (sounds, electrical,
+     damage, etc). No <input>/<output> here either; see
+     ../../scripts/demo.xml and ../../output/*.xml for why the wire-level
+     configuration deliberately lives outside the airframe file.
+
+     NOTE: XML comments cannot contain two consecutive hyphens anywhere
+     except the closing marker, so every comment in this repo's XML avoids
+     them entirely rather than relying on a stray one never landing badly. -->
+<fdm_config name="minimal" version="2.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:noNamespaceSchemaLocation="http://jsbsim.sourceforge.net/JSBSim.xsd">
+
+    <fileheader>
+        <author> jsbsim_tester </author>
+        <filecreationdate> 2026-08-16 </filecreationdate>
+        <version> 1.0 </version>
+        <description> Minimal hand-written aircraft for UDP link testing </description>
+    </fileheader>
+
+    <metrics>
+        <wingarea unit="FT2"> 180 </wingarea>
+        <wingspan unit="FT"> 36 </wingspan>
+        <chord unit="FT"> 5 </chord>
+        <htailarea unit="FT2"> 21 </htailarea>
+        <htailarm unit="FT"> 16 </htailarm>
+        <vtailarea unit="FT2"> 16 </vtailarea>
+        <vtailarm unit="FT"> 16 </vtailarm>
+        <location name="AERORP" unit="FT">
+            <x> 3.4 </x>
+            <y> 0 </y>
+            <z> 0 </z>
+        </location>
+        <location name="EYEPOINT" unit="FT">
+            <x> 3.0 </x>
+            <y> 0 </y>
+            <z> 1.0 </z>
+        </location>
+        <location name="VRP" unit="FT">
+            <x> 0 </x>
+            <y> 0 </y>
+            <z> 0 </z>
+        </location>
+    </metrics>
+
+    <mass_balance>
+        <!-- Moments of inertia are typical for a roughly 1500 lb GA-sized
+             airframe, not derived from any real aircraft's data. -->
+        <ixx unit="SLUG*FT2"> 950 </ixx>
+        <iyy unit="SLUG*FT2"> 1300 </iyy>
+        <izz unit="SLUG*FT2"> 1900 </izz>
+        <ixy unit="SLUG*FT2"> 0 </ixy>
+        <ixz unit="SLUG*FT2"> 0 </ixz>
+        <iyz unit="SLUG*FT2"> 0 </iyz>
+        <emptywt unit="LBS"> 1500 </emptywt>
+        <location name="CG" unit="FT">
+            <x> 3.2 </x>
+            <y> 0 </y>
+            <z> 0 </z>
+        </location>
+    </mass_balance>
+
+    <!-- A single token contact point. This aircraft starts and stays
+         airborne for the whole demo (see scripts/demo.xml), so ground
+         handling is never exercised; this exists only because JSBSim
+         expects a ground_reactions element to be present. -->
+    <ground_reactions>
+        <contact type="BOGEY" name="MAIN">
+            <location unit="FT">
+                <x> 3.2 </x>
+                <y> 0 </y>
+                <z> -3 </z>
+            </location>
+            <static_friction> 0.8 </static_friction>
+            <dynamic_friction> 0.5 </dynamic_friction>
+            <rolling_friction> 0.02 </rolling_friction>
+            <spring_coeff unit="LBS/FT"> 3000 </spring_coeff>
+            <damping_coeff unit="LBS/FT/SEC"> 400 </damping_coeff>
+            <max_steer unit="DEG"> 0 </max_steer>
+            <brake_group> NONE </brake_group>
+            <retractable>0</retractable>
+        </contact>
+    </ground_reactions>
+
+    <!-- No propulsion element: this aircraft glides. Initial airspeed in
+         scripts/demo.xml's initial conditions is what keeps it flying. -->
+
+    <flight_control name="minimal FCS">
+        <channel name="Pitch">
+            <aerosurface_scale name="fcs/elevator-pos-rad">
+                <input>fcs/elevator-cmd-norm</input>
+                <range>
+                    <min>-0.35</min>
+                    <max>0.35</max>
+                </range>
+                <output>fcs/elevator-pos-rad</output>
+            </aerosurface_scale>
+        </channel>
+
+        <channel name="Roll">
+            <aerosurface_scale name="fcs/aileron-pos-rad">
+                <input>fcs/aileron-cmd-norm</input>
+                <range>
+                    <min>-0.35</min>
+                    <max>0.35</max>
+                </range>
+                <output>fcs/aileron-pos-rad</output>
+            </aerosurface_scale>
+        </channel>
+
+        <channel name="Yaw">
+            <aerosurface_scale name="fcs/rudder-pos-rad">
+                <input>fcs/rudder-cmd-norm</input>
+                <range>
+                    <min>-0.35</min>
+                    <max>0.35</max>
+                </range>
+                <output>fcs/rudder-pos-rad</output>
+            </aerosurface_scale>
+        </channel>
+    </flight_control>
+
+    <aerodynamics>
+        <axis name="LIFT">
+            <function name="aero/coefficient/CL0">
+                <description>Lift_at_zero_alpha</description>
+                <product>
+                    <property>aero/qbar-area</property>
+                    <value>0.30</value>
+                </product>
+            </function>
+            <function name="aero/coefficient/CLalpha">
+                <description>Lift_due_to_alpha</description>
+                <product>
+                    <property>aero/qbar-area</property>
+                    <property>aero/alpha-rad</property>
+                    <value>5.0</value>
+                </product>
+            </function>
+        </axis>
+
+        <axis name="DRAG">
+            <function name="aero/coefficient/CD0">
+                <description>Drag_at_zero_alpha</description>
+                <product>
+                    <property>aero/qbar-area</property>
+                    <value>0.035</value>
+                </product>
+            </function>
+            <function name="aero/coefficient/CDalpha2">
+                <description>Induced_drag_due_to_alpha_squared</description>
+                <product>
+                    <property>aero/qbar-area</property>
+                    <property>aero/alpha-rad</property>
+                    <property>aero/alpha-rad</property>
+                    <value>2.0</value>
+                </product>
+            </function>
+        </axis>
+
+        <axis name="PITCH">
+            <function name="aero/coefficient/Cmalpha">
+                <description>Pitch_moment_due_to_alpha</description>
+                <product>
+                    <property>aero/qbar-psf</property>
+                    <property>metrics/Sw-sqft</property>
+                    <property>metrics/cbarw-ft</property>
+                    <property>aero/alpha-rad</property>
+                    <value>-1.0</value>
+                </product>
+            </function>
+            <function name="aero/coefficient/Cmq">
+                <description>Pitch_moment_due_to_pitch_rate</description>
+                <product>
+                    <property>aero/qbar-psf</property>
+                    <property>metrics/Sw-sqft</property>
+                    <property>metrics/cbarw-ft</property>
+                    <property>aero/ci2vel</property>
+                    <property>velocities/q-aero-rad_sec</property>
+                    <value>-12.0</value>
+                </product>
+            </function>
+            <function name="aero/coefficient/Cmde">
+                <description>Pitch_moment_due_to_elevator</description>
+                <product>
+                    <property>aero/qbar-psf</property>
+                    <property>metrics/Sw-sqft</property>
+                    <property>metrics/cbarw-ft</property>
+                    <property>fcs/elevator-pos-rad</property>
+                    <value>-1.5</value>
+                </product>
+            </function>
+        </axis>
+
+        <axis name="ROLL">
+            <function name="aero/coefficient/Clp">
+                <description>Roll_moment_due_to_roll_rate</description>
+                <product>
+                    <property>aero/qbar-psf</property>
+                    <property>metrics/Sw-sqft</property>
+                    <property>metrics/bw-ft</property>
+                    <property>aero/bi2vel</property>
+                    <property>velocities/p-aero-rad_sec</property>
+                    <value>-0.4</value>
+                </product>
+            </function>
+            <function name="aero/coefficient/Clda">
+                <description>Roll_moment_due_to_aileron</description>
+                <product>
+                    <property>aero/qbar-psf</property>
+                    <property>metrics/Sw-sqft</property>
+                    <property>metrics/bw-ft</property>
+                    <property>fcs/aileron-pos-rad</property>
+                    <value>0.15</value>
+                </product>
+            </function>
+        </axis>
+
+        <axis name="YAW">
+            <function name="aero/coefficient/Cnr">
+                <description>Yaw_moment_due_to_yaw_rate</description>
+                <product>
+                    <property>aero/qbar-psf</property>
+                    <property>metrics/Sw-sqft</property>
+                    <property>metrics/bw-ft</property>
+                    <property>aero/bi2vel</property>
+                    <property>velocities/r-aero-rad_sec</property>
+                    <value>-0.15</value>
+                </product>
+            </function>
+            <function name="aero/coefficient/Cndr">
+                <description>Yaw_moment_due_to_rudder</description>
+                <product>
+                    <property>aero/qbar-psf</property>
+                    <property>metrics/Sw-sqft</property>
+                    <property>metrics/bw-ft</property>
+                    <property>fcs/rudder-pos-rad</property>
+                    <value>-0.10</value>
+                </product>
+            </function>
+        </axis>
+    </aerodynamics>
+
+</fdm_config>

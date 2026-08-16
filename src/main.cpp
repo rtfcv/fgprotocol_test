@@ -41,7 +41,7 @@ double radToDeg(double rad) { return rad * 180.0 / 3.14159265358979323846; }
 // silently, on any property-count mismatch) and this is how they're kept
 // in sync after either one changes.
 void printInputXml() {
-    std::cout << "<input type=\"QTJSBSIM\" port=\"" << kControlPort << "\">\n";
+    std::cout << "<input type=\"QTJSBSIM\" port=\"" << kControlPort << "\" rate=\"30\">\n";
     for (const char* prop : control::kControlProperties) {
         std::cout << "  <property> " << prop << " </property>\n";
     }

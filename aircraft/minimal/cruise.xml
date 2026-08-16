@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<initialize name="cruise">
+  <!-- Airborne start: a shallow, roughly-trimmed glide at about 130 ft/sec
+       (about 77 KTAS), about 1.8deg alpha, worked out from this aircraft's
+       own CL0/CLalpha in minimal.xml so it doesn't stall or dive on frame
+       one (lift roughly equals weight: qbar*S*CL = 0.5*0.002175*130^2*180
+       *0.4536 is about 1500 lb at 3000ft where rho is about 0.002175
+       slug/ft3, and empty weight here is 1500 lb). No engine (see
+       minimal.xml), so it glides down slowly for the whole 40-odd seconds
+       the demo control schedule (src/control.cpp) covers. -->
+  <ubody unit="FT/SEC">  130</ubody>
+  <vbody unit="FT/SEC">    0</vbody>
+  <wbody unit="FT/SEC">    4</wbody>
+  <phi unit="DEG">        0</phi>
+  <theta unit="DEG">      2</theta>
+  <psi unit="DEG">        0</psi>
+  <altitude unit="FT">  3000</altitude>
+  <latitude unit="DEG">   40.0</latitude>
+  <longitude unit="DEG"> -80.0</longitude>
+</initialize>

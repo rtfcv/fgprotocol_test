@@ -250,6 +250,16 @@ DecodeResult decode(const uint8_t* data, std::size_t size, Packet& out);
 // overload above) zeroes `out`.
 DecodeResult decode(const FGNetFDM& raw, Packet& out);
 
+// Test-only oracle: decodes the same bytes as decode() above, but via the
+// BigEndianReader byte-cursor retained in net_fdm.cpp instead of
+// memcpy-into-FGNetFDM + ntoh*(). Exists so tests/test_net_fdm.cpp can
+// assert the two decoders still agree field-for-field on the same input --
+// BigEndianReader is not on the live decode() path (main.cpp never calls
+// it) and would otherwise go unverified by anything. Mirrors decode()'s
+// WrongSize/WrongVersion/Ok contract exactly (WrongSize zeroes `out`,
+// WrongVersion still populates it) so the comparison is meaningful.
+DecodeResult decodeWithBigEndianReader(const uint8_t* data, std::size_t size, Packet& out);
+
 const char* describe(DecodeResult r);
 
 } // namespace net_fdm

@@ -118,6 +118,87 @@ std::vector<uint8_t> buildValidPacket() {
     return b;
 }
 
+// Asserts every field of `a` and `b` matches. Used to cross-check the live
+// decode() (memcpy into packed FGNetFDM + ntoh*) against
+// decodeWithBigEndianReader() (the retained byte-cursor decoder) on the
+// same input -- both are pure functions of the same bytes, so they should
+// come back bit-for-bit identical, not just close. buildValidPacket() gives
+// every field a distinct value specifically so a field landing in the wrong
+// member here would be caught, not masked by two fields sharing a value.
+void checkPacketsMatch(const net_fdm::Packet& a, const net_fdm::Packet& b) {
+    CHECK_EQ(a.version, b.version);
+    CHECK_NEAR(a.longitude_rad, b.longitude_rad, 0.0);
+    CHECK_NEAR(a.latitude_rad, b.latitude_rad, 0.0);
+    CHECK_NEAR(a.altitude_m, b.altitude_m, 0.0);
+    CHECK_NEAR(a.agl_m, b.agl_m, 0.0);
+    CHECK_NEAR(a.phi_rad, b.phi_rad, 0.0);
+    CHECK_NEAR(a.theta_rad, b.theta_rad, 0.0);
+    CHECK_NEAR(a.psi_rad, b.psi_rad, 0.0);
+    CHECK_NEAR(a.alpha_rad, b.alpha_rad, 0.0);
+    CHECK_NEAR(a.beta_rad, b.beta_rad, 0.0);
+
+    CHECK_NEAR(a.phidot_rad_s, b.phidot_rad_s, 0.0);
+    CHECK_NEAR(a.thetadot_rad_s, b.thetadot_rad_s, 0.0);
+    CHECK_NEAR(a.psidot_rad_s, b.psidot_rad_s, 0.0);
+    CHECK_NEAR(a.vcas_kt, b.vcas_kt, 0.0);
+    CHECK_NEAR(a.climb_rate_fps, b.climb_rate_fps, 0.0);
+    CHECK_NEAR(a.v_north_fps, b.v_north_fps, 0.0);
+    CHECK_NEAR(a.v_east_fps, b.v_east_fps, 0.0);
+    CHECK_NEAR(a.v_down_fps, b.v_down_fps, 0.0);
+    CHECK_NEAR(a.v_body_u_fps, b.v_body_u_fps, 0.0);
+    CHECK_NEAR(a.v_body_v_fps, b.v_body_v_fps, 0.0);
+    CHECK_NEAR(a.v_body_w_fps, b.v_body_w_fps, 0.0);
+
+    CHECK_NEAR(a.a_x_pilot_fps2, b.a_x_pilot_fps2, 0.0);
+    CHECK_NEAR(a.a_y_pilot_fps2, b.a_y_pilot_fps2, 0.0);
+    CHECK_NEAR(a.a_z_pilot_fps2, b.a_z_pilot_fps2, 0.0);
+
+    CHECK_NEAR(a.stall_warning, b.stall_warning, 0.0);
+    CHECK_NEAR(a.slip_deg, b.slip_deg, 0.0);
+
+    CHECK_EQ(a.num_engines, b.num_engines);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) {
+        CHECK_EQ(a.eng_state[i], b.eng_state[i]);
+        CHECK_NEAR(a.rpm[i], b.rpm[i], 0.0);
+        CHECK_NEAR(a.fuel_flow_gph[i], b.fuel_flow_gph[i], 0.0);
+        CHECK_NEAR(a.fuel_px_psi[i], b.fuel_px_psi[i], 0.0);
+        CHECK_NEAR(a.egt_degf[i], b.egt_degf[i], 0.0);
+        CHECK_NEAR(a.cht_degf[i], b.cht_degf[i], 0.0);
+        CHECK_NEAR(a.mp_inhg[i], b.mp_inhg[i], 0.0);
+        CHECK_NEAR(a.tit[i], b.tit[i], 0.0);
+        CHECK_NEAR(a.oil_temp_degf[i], b.oil_temp_degf[i], 0.0);
+        CHECK_NEAR(a.oil_px_psi[i], b.oil_px_psi[i], 0.0);
+    }
+
+    CHECK_EQ(a.num_tanks, b.num_tanks);
+    for (int i = 0; i < net_fdm::kMaxTanks; ++i) {
+        CHECK_NEAR(a.fuel_quantity_lbs[i], b.fuel_quantity_lbs[i], 0.0);
+    }
+
+    CHECK_EQ(a.num_wheels, b.num_wheels);
+    for (int i = 0; i < net_fdm::kMaxWheels; ++i) {
+        CHECK_EQ(a.wow[i], b.wow[i]);
+        CHECK_NEAR(a.gear_pos_norm[i], b.gear_pos_norm[i], 0.0);
+        CHECK_NEAR(a.gear_steer_deg[i], b.gear_steer_deg[i], 0.0);
+        CHECK_NEAR(a.gear_compression_norm[i], b.gear_compression_norm[i], 0.0);
+    }
+
+    CHECK_EQ(a.cur_time, b.cur_time);
+    CHECK_EQ(a.warp, b.warp);
+    CHECK_NEAR(a.visibility_m, b.visibility_m, 0.0);
+
+    CHECK_NEAR(a.elevator_norm, b.elevator_norm, 0.0);
+    CHECK_NEAR(a.elevator_trim_norm, b.elevator_trim_norm, 0.0);
+    CHECK_NEAR(a.left_flap_norm, b.left_flap_norm, 0.0);
+    CHECK_NEAR(a.right_flap_norm, b.right_flap_norm, 0.0);
+    CHECK_NEAR(a.left_aileron_norm, b.left_aileron_norm, 0.0);
+    CHECK_NEAR(a.right_aileron_norm, b.right_aileron_norm, 0.0);
+    CHECK_NEAR(a.rudder_norm, b.rudder_norm, 0.0);
+    CHECK_NEAR(a.nose_wheel_norm, b.nose_wheel_norm, 0.0);
+    CHECK_NEAR(a.speedbrake_norm, b.speedbrake_norm, 0.0);
+    CHECK_NEAR(a.spoilers_norm, b.spoilers_norm, 0.0);
+}
+
 } // namespace
 
 int main() {
@@ -220,6 +301,43 @@ int main() {
         CHECK_NEAR(out.longitude_rad, 1.111, 1e-9);
         CHECK_NEAR(out.vcas_kt, 130.0, 1e-4);
         CHECK_EQ(out.num_wheels, static_cast<uint32_t>(3));
+    }
+
+    // Oracle check: decodeWithBigEndianReader() must agree with decode()
+    // field-for-field on every DecodeResult, not just Ok. This is the only
+    // thing that keeps the retained BigEndianReader class honest -- nothing
+    // else in this file (or main.cpp) ever calls it, so without this test a
+    // future edit to net_fdm.h's field list could update decode() and leave
+    // BigEndianReader silently stale.
+    {
+        net_fdm::Packet viaDecode;
+        net_fdm::Packet viaReader;
+        CHECK(net_fdm::decode(valid.data(), valid.size(), viaDecode) ==
+              net_fdm::DecodeResult::Ok);
+        CHECK(net_fdm::decodeWithBigEndianReader(valid.data(), valid.size(), viaReader) ==
+              net_fdm::DecodeResult::Ok);
+        checkPacketsMatch(viaDecode, viaReader);
+    }
+    {
+        std::vector<uint8_t> badVersion = valid;
+        badVersion[3] = 7; // version 7, not 24 -- see the WrongVersion case above
+        net_fdm::Packet viaDecode;
+        net_fdm::Packet viaReader;
+        CHECK(net_fdm::decode(badVersion.data(), badVersion.size(), viaDecode) ==
+              net_fdm::DecodeResult::WrongVersion);
+        CHECK(net_fdm::decodeWithBigEndianReader(badVersion.data(), badVersion.size(), viaReader) ==
+              net_fdm::DecodeResult::WrongVersion);
+        checkPacketsMatch(viaDecode, viaReader);
+    }
+    {
+        std::vector<uint8_t> tooShort(valid.begin(), valid.end() - 1);
+        net_fdm::Packet viaDecode;
+        net_fdm::Packet viaReader;
+        CHECK(net_fdm::decode(tooShort.data(), tooShort.size(), viaDecode) ==
+              net_fdm::DecodeResult::WrongSize);
+        CHECK(net_fdm::decodeWithBigEndianReader(tooShort.data(), tooShort.size(), viaReader) ==
+              net_fdm::DecodeResult::WrongSize);
+        checkPacketsMatch(viaDecode, viaReader); // both zeroed
     }
 
     // A failed decode must leave `out` all-zero, not partially filled --

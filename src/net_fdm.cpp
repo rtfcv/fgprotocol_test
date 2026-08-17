@@ -5,7 +5,7 @@
 namespace net_fdm {
 namespace {
 
-// RETAINED AS REFERENCE, NOT ON THE LIVE PATH.
+// RETAINED AS REFERENCE, NOT ON THE LIVE PATH -- BUT EXERCISED BY TESTS.
 //
 // decode() below reads FlightGear's wire format by recv()'ing/memcpy'ing
 // straight into the packed FGNetFDM struct (net_fdm.h) and byte-swapping
@@ -13,11 +13,12 @@ namespace {
 // padding-and-alignment-agnostic implementation of the same decode: a
 // sequential byte-cursor that never lays a struct over the wire bytes at
 // all, so it can't be broken by a packing/alignment mistake in FGNetFDM.
-// Kept here, uncalled, as documentation of that approach and as a fallback
-// to reach for if the packed-struct path ever needs debugging. Nothing
-// currently references it, and nothing currently tests it -- a future
-// change to the wire field list only has to keep the live decode below
-// correct, not this one.
+// main.cpp never calls it -- decodeWithBigEndianReader() below (declared in
+// net_fdm.h, test-only) is the only caller, letting
+// tests/test_net_fdm.cpp assert the two decoders agree field-for-field on
+// the same bytes. A future change to the wire field list still has to keep
+// both in sync, or that comparison test fails -- unlike a plain unused
+// class, this one won't rot silently.
 //
 // Sequential big-endian byte-cursor reader. Each call reads at the current
 // position and advances -- offsets are never computed by hand, so the field
@@ -176,6 +177,103 @@ DecodeResult decode(const FGNetFDM& raw, Packet& out) {
     // version mismatch here does NOT mean `raw`'s layout was wrong -- only
     // that the sender is a different protocol revision. `out` is populated
     // either way; the caller (main.cpp) decides whether to warn and use it.
+    out = p;
+    if (p.version != kVersion) {
+        return DecodeResult::WrongVersion;
+    }
+    return DecodeResult::Ok;
+}
+
+DecodeResult decodeWithBigEndianReader(const uint8_t* data, std::size_t size, Packet& out) {
+    out = Packet{};
+
+    if (size != kPacketSize) {
+        return DecodeResult::WrongSize;
+    }
+
+    BigEndianReader r(data, size);
+    Packet p;
+
+    p.version = r.u32();
+    r.u32(); // padding, discarded
+
+    p.longitude_rad = r.f64();
+    p.latitude_rad = r.f64();
+    p.altitude_m = r.f64();
+    p.agl_m = r.f32();
+    p.phi_rad = r.f32();
+    p.theta_rad = r.f32();
+    p.psi_rad = r.f32();
+    p.alpha_rad = r.f32();
+    p.beta_rad = r.f32();
+
+    p.phidot_rad_s = r.f32();
+    p.thetadot_rad_s = r.f32();
+    p.psidot_rad_s = r.f32();
+    p.vcas_kt = r.f32();
+    p.climb_rate_fps = r.f32();
+    p.v_north_fps = r.f32();
+    p.v_east_fps = r.f32();
+    p.v_down_fps = r.f32();
+    p.v_body_u_fps = r.f32();
+    p.v_body_v_fps = r.f32();
+    p.v_body_w_fps = r.f32();
+
+    p.a_x_pilot_fps2 = r.f32();
+    p.a_y_pilot_fps2 = r.f32();
+    p.a_z_pilot_fps2 = r.f32();
+
+    p.stall_warning = r.f32();
+    p.slip_deg = r.f32();
+
+    p.num_engines = r.u32();
+    r.u32arr(p.eng_state);
+    r.f32arr(p.rpm);
+    r.f32arr(p.fuel_flow_gph);
+    r.f32arr(p.fuel_px_psi);
+    r.f32arr(p.egt_degf);
+    r.f32arr(p.cht_degf);
+    r.f32arr(p.mp_inhg);
+    r.f32arr(p.tit);
+    r.f32arr(p.oil_temp_degf);
+    r.f32arr(p.oil_px_psi);
+
+    p.num_tanks = r.u32();
+    r.f32arr(p.fuel_quantity_lbs);
+
+    p.num_wheels = r.u32();
+    r.u32arr(p.wow);
+    r.f32arr(p.gear_pos_norm);
+    r.f32arr(p.gear_steer_deg);
+    r.f32arr(p.gear_compression_norm);
+
+    p.cur_time = r.u32();
+    p.warp = r.i32();
+    p.visibility_m = r.f32();
+
+    p.elevator_norm = r.f32();
+    p.elevator_trim_norm = r.f32();
+    p.left_flap_norm = r.f32();
+    p.right_flap_norm = r.f32();
+    p.left_aileron_norm = r.f32();
+    p.right_aileron_norm = r.f32();
+    p.rudder_norm = r.f32();
+    p.nose_wheel_norm = r.f32();
+    p.speedbrake_norm = r.f32();
+    p.spoilers_norm = r.f32();
+
+    // Self-check: the reader must have consumed exactly kPacketSize bytes.
+    // If it didn't, the field list here and in net_fdm.h's FGNetFDM/Packet
+    // don't agree on byte count and every offset past the mismatch is
+    // wrong -- treat that as a decode failure rather than trusting
+    // partially-misaligned data.
+    if (r.ranOff() || r.pos() != kPacketSize) {
+        return DecodeResult::WrongSize;
+    }
+
+    // Same WrongVersion contract as decode() above: `out` is still
+    // populated so the two can be compared field-for-field regardless of
+    // which DecodeResult came back.
     out = p;
     if (p.version != kVersion) {
         return DecodeResult::WrongVersion;

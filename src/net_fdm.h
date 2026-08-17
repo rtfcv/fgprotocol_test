@@ -4,6 +4,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 // FlightGear's native-fdm wire format ("FGNetFDM"), protocol version 24.
 // Defined by FlightGear's src/Network/net_fdm.hxx; JSBSim's
@@ -19,6 +20,135 @@ constexpr std::size_t kPacketSize = 408;
 constexpr int kMaxEngines = 4;
 constexpr int kMaxWheels = 3;
 constexpr int kMaxTanks = 4;
+
+// The wire struct: FlightGear's FGNetFDM, byte-for-byte, big-endian, no
+// compiler padding. This is what recv() writes into directly on the live
+// path (see UdpSocket::recvInto() / main.cpp) -- field order, types and
+// counts below must match FlightGear's src/Network/net_fdm.hxx exactly, or
+// every field past the mismatch reads as garbage. #pragma pack(1) removes
+// the alignment padding a normal struct would get (the doubles in
+// particular would otherwise be padded to 8-byte alignment), matching
+// FlightGear's own wire layout. The static_assert below is the actual
+// safety net: if this struct's field list ever drifts from net_fdm.hxx,
+// the build fails here with "FGNetFDM layout mismatch" instead of the
+// program silently decoding garbage at runtime.
+#pragma pack(push, 1)
+struct FGNetFDM {
+    uint32_t version;
+    uint32_t padding; // keeps the following doubles 8-byte aligned in
+                       // FlightGear's own (unpacked) struct; carried here
+                       // only so the byte layout matches, not for alignment
+                       // (this struct is packed to 1).
+
+    double longitude;  // radians
+    double latitude;   // radians
+    double altitude;   // meters
+    float agl;         // meters
+    float phi;         // roll, radians
+    float theta;       // pitch, radians
+    float psi;         // yaw / true heading, radians
+    float alpha;       // angle of attack, radians
+    float beta;        // sideslip, radians
+
+    float phidot;      // roll rate, radians/sec
+    float thetadot;    // pitch rate, radians/sec
+    float psidot;      // yaw rate, radians/sec
+    float vcas;        // calibrated airspeed, knots
+    float climb_rate;  // ft/s
+    float v_north;      // ft/s
+    float v_east;       // ft/s
+    float v_down;       // ft/s
+    float v_body_u;      // ft/s
+    float v_body_v;      // ft/s
+    float v_body_w;      // ft/s
+
+    float A_X_pilot;   // ft/s^2
+    float A_Y_pilot;   // ft/s^2
+    float A_Z_pilot;   // ft/s^2
+
+    float stall_warning;
+    float slip_deg;
+
+    uint32_t num_engines;
+    uint32_t eng_state[kMaxEngines];
+    float rpm[kMaxEngines];
+    float fuel_flow[kMaxEngines];   // gal/hr
+    float fuel_px[kMaxEngines];     // psi
+    float egt[kMaxEngines];         // degF
+    float cht[kMaxEngines];         // degF
+    float mp_osi[kMaxEngines];      // inHg
+    float tit[kMaxEngines];
+    float oil_temp[kMaxEngines];    // degF
+    float oil_px[kMaxEngines];      // psi
+
+    uint32_t num_tanks;
+    float fuel_quantity[kMaxTanks]; // lbs
+
+    uint32_t num_wheels;
+    uint32_t wow[kMaxWheels];
+    float gear_pos[kMaxWheels];         // 0..1
+    float gear_steer[kMaxWheels];       // degrees
+    float gear_compression[kMaxWheels]; // 0..1
+
+    uint32_t cur_time; // unix seconds
+    int32_t warp;
+    float visibility; // meters
+
+    float elevator;
+    float elevator_trim_tab;
+    float left_flap;
+    float right_flap;
+    float left_aileron;
+    float right_aileron;
+    float rudder;
+    float nose_wheel;
+    float speedbrake;
+    float spoilers;
+};
+#pragma pack(pop)
+
+static_assert(sizeof(FGNetFDM) == kPacketSize, "FGNetFDM layout mismatch");
+
+// Hand-written big-endian byte-swaps -- deliberately not ntohl()/ntohs() from
+// <winsock2.h>/<arpa/inet.h>: pulling either header into this file would
+// force every consumer (including tests/test_net_fdm.cpp, which links
+// without Winsock -- see CMakeLists.txt's jsbsim_link target) to link
+// against sockets just to decode a struct. memcpy, not a union or
+// reinterpret_cast, keeps this clear of strict-aliasing UB.
+inline uint32_t ntoh32(uint32_t v) {
+    return ((v & 0x000000FFu) << 24) | ((v & 0x0000FF00u) << 8) |
+           ((v & 0x00FF0000u) >> 8) | ((v & 0xFF000000u) >> 24);
+}
+
+// Takes the FGNetFDM field itself (a float/double already holding the raw
+// big-endian bit pattern, reinterpreted -- meaninglessly, as far as its
+// numeric value goes -- as a native float/double by simply being a struct
+// member). Deliberately NOT a uint32_t/uint64_t parameter: passing
+// `raw.agl` (a float) to a uint32_t parameter would implicitly *numerically*
+// convert the float's already-nonsense value to an integer -- rounding
+// toward zero, saturating, or invoking UB on an out-of-range/NaN value --
+// instead of reinterpreting its bits, silently corrupting every field. This
+// was caught by tests/test_net_fdm.cpp's happy-path CHECK_NEAR values before
+// this fix. memcpy is what actually gets at the bits.
+inline float ntohf(float v) {
+    uint32_t bits;
+    std::memcpy(&bits, &v, sizeof(bits));
+    bits = ntoh32(bits);
+    float f;
+    std::memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
+inline double ntohd(double v) {
+    uint64_t bits;
+    std::memcpy(&bits, &v, sizeof(bits));
+    uint64_t hostBits =
+        (static_cast<uint64_t>(ntoh32(static_cast<uint32_t>(bits & 0xFFFFFFFFull))) << 32) |
+        ntoh32(static_cast<uint32_t>(bits >> 32));
+    double d;
+    std::memcpy(&d, &hostBits, sizeof(d));
+    return d;
+}
 
 struct Packet {
     uint32_t version = 0;
@@ -96,13 +226,29 @@ enum class DecodeResult {
     WrongVersion,  // size was right but the version field wasn't kVersion
 };
 
-// Decodes a raw big-endian FGNetFDM datagram into `out`.
+// Decodes a raw big-endian FGNetFDM datagram into `out`. Validates the size,
+// then memcpy's into a local FGNetFDM (the incoming pointer has no alignment
+// guarantee, so this can't just reinterpret_cast it) and delegates to the
+// struct-taking overload below.
 //
-// On anything but Ok, `out` is reset to a default-constructed (all-zero)
-// Packet rather than left partially filled -- callers must check the
-// DecodeResult, not just look at the data, to tell a real zeroed-out flight
-// state from "nothing decoded."
+// On WrongSize, `out` is reset to a default-constructed (all-zero) Packet
+// rather than left partially filled -- callers must check the DecodeResult,
+// not just look at the data, to tell a real zeroed-out flight state from
+// "nothing decoded." WrongVersion is different: a version mismatch doesn't
+// imply the layout is wrong, so `out` is still populated -- see the
+// struct-taking overload.
 DecodeResult decode(const uint8_t* data, std::size_t size, Packet& out);
+
+// Decodes an already-received FGNetFDM (e.g. recv()'d straight into one on
+// the live path in main.cpp) into `out`.
+//
+// On version mismatch, `out` is still populated from `raw` and
+// DecodeResult::WrongVersion is returned -- callers (main.cpp) are expected
+// to warn and use the data anyway, since a version bump alone doesn't make
+// the bytes garbage. Only a size problem (impossible to hit through this
+// overload, since FGNetFDM is fixed-size, but relevant to the buffer-taking
+// overload above) zeroes `out`.
+DecodeResult decode(const FGNetFDM& raw, Packet& out);
 
 const char* describe(DecodeResult r);
 

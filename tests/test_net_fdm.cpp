@@ -5,6 +5,7 @@
 // hand-built buffer standing in for a real UDP datagram.
 #include "net_fdm.h"
 
+#include <cstddef>
 #include <cstring>
 #include <vector>
 
@@ -126,6 +127,21 @@ int main() {
     CHECK_EQ(valid.size(), net_fdm::kPacketSize);
     CHECK_EQ(net_fdm::kPacketSize, static_cast<std::size_t>(408));
 
+    // Wire-struct layout guards. sizeof() alone can't catch two adjacent
+    // fields swapped, or a field group that grew and shrank by the same
+    // total size -- offsetof() at each group boundary pins the field order
+    // itself, not just the overall byte count. #pragma pack(1) means these
+    // offsets should match FlightGear's net_fdm.hxx exactly with no
+    // compiler-inserted padding; a static_assert in net_fdm.h backs this up
+    // at compile time for the overall size.
+    CHECK_EQ(sizeof(net_fdm::FGNetFDM), net_fdm::kPacketSize);
+    CHECK_EQ(offsetof(net_fdm::FGNetFDM, longitude), static_cast<std::size_t>(8));
+    CHECK_EQ(offsetof(net_fdm::FGNetFDM, num_engines), static_cast<std::size_t>(120));
+    CHECK_EQ(offsetof(net_fdm::FGNetFDM, num_tanks), static_cast<std::size_t>(284));
+    CHECK_EQ(offsetof(net_fdm::FGNetFDM, num_wheels), static_cast<std::size_t>(304));
+    CHECK_EQ(offsetof(net_fdm::FGNetFDM, cur_time), static_cast<std::size_t>(356));
+    CHECK_EQ(offsetof(net_fdm::FGNetFDM, elevator), static_cast<std::size_t>(368));
+
     // Happy path: every field lands where it belongs.
     net_fdm::Packet p;
     net_fdm::DecodeResult r = net_fdm::decode(valid.data(), valid.size(), p);
@@ -172,7 +188,10 @@ int main() {
               net_fdm::DecodeResult::WrongSize);
     }
 
-    // Wrong version: right size, first 4 bytes altered.
+    // Wrong version: right size, first 4 bytes altered. Unlike WrongSize,
+    // this must NOT zero `out` -- a version mismatch doesn't imply a wrong
+    // layout, so main.cpp is expected to warn and use the data anyway (see
+    // CLAUDE.md/plan notes on this being a deliberate, non-fatal case).
     {
         std::vector<uint8_t> badVersion = valid;
         badVersion[0] = 0;
@@ -182,6 +201,25 @@ int main() {
         net_fdm::Packet out;
         CHECK(net_fdm::decode(badVersion.data(), badVersion.size(), out) ==
               net_fdm::DecodeResult::WrongVersion);
+        CHECK_EQ(out.version, static_cast<uint32_t>(7));
+        CHECK_NEAR(out.altitude_m, 3333.0, 1e-9);
+        CHECK_NEAR(out.rudder_norm, 0.70, 1e-5);
+    }
+
+    // The struct-taking overload: a caller that already recv()'d straight
+    // into an FGNetFDM (main.cpp's live path) must get the same result as
+    // decoding the equivalent raw bytes.
+    {
+        net_fdm::FGNetFDM raw;
+        CHECK_EQ(valid.size(), sizeof(raw));
+        std::memcpy(&raw, valid.data(), sizeof(raw));
+
+        net_fdm::Packet out;
+        net_fdm::DecodeResult r3 = net_fdm::decode(raw, out);
+        CHECK(r3 == net_fdm::DecodeResult::Ok);
+        CHECK_NEAR(out.longitude_rad, 1.111, 1e-9);
+        CHECK_NEAR(out.vcas_kt, 130.0, 1e-4);
+        CHECK_EQ(out.num_wheels, static_cast<uint32_t>(3));
     }
 
     // A failed decode must leave `out` all-zero, not partially filled --

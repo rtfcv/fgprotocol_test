@@ -431,7 +431,12 @@ void putF64(std::vector<uint8_t>& buf, double v) {
  * Every field gets a distinct, recognizable value (so a field-order swap
  * -- the realistic bug here -- shows up as the wrong value landing in the
  * wrong member, rather than two fields that happen to share a value
- * hiding the mistake).
+ * hiding the mistake). This includes every *element* of every array
+ * field (`base + i`, not one repeated value) -- decode() is known to
+ * leave array element order reversed (see net_fdm.h), and a uniform
+ * array value can't distinguish reversed from correct order. Distinct
+ * elements are what let checkPacketsMatch() below actually verify that
+ * reversal, instead of just documenting it.
  *
  * @return The raw datagram bytes.
  */
@@ -472,25 +477,25 @@ std::vector<uint8_t> buildValidPacket() {
     putF32(b, 24.1f); // slip_deg
 
     putU32(b, 1); // num_engines
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putU32(b, 2); // eng_state
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 2500.0f); // rpm
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 8.0f);    // fuel_flow_gph
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 5.0f);    // fuel_px_psi
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 1400.0f); // egt_degf
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 380.0f);  // cht_degf
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 22.0f);   // mp_inhg
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 0.0f);    // tit
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 180.0f);  // oil_temp_degf
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 60.0f);   // oil_px_psi
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putU32(b, 21 + i);          // eng_state
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 2501.0f + i);     // rpm
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 8.1f + 0.1f * i); // fuel_flow_gph
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 5.1f + 0.1f * i); // fuel_px_psi
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 1401.0f + i);     // egt_degf
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 381.0f + i);      // cht_degf
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 22.1f + 0.1f * i);// mp_inhg
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 1.0f + i);        // tit
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 181.0f + i);      // oil_temp_degf
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) putF32(b, 61.0f + i);       // oil_px_psi
 
     putU32(b, 2); // num_tanks
-    for (int i = 0; i < net_fdm::kMaxTanks; ++i) putF32(b, 100.0f); // fuel_quantity_lbs
+    for (int i = 0; i < net_fdm::kMaxTanks; ++i) putF32(b, 101.0f + i); // fuel_quantity_lbs
 
     putU32(b, 3); // num_wheels
-    for (int i = 0; i < net_fdm::kMaxWheels; ++i) putU32(b, 0);   // wow
-    for (int i = 0; i < net_fdm::kMaxWheels; ++i) putF32(b, 1.0f); // gear_pos_norm
-    for (int i = 0; i < net_fdm::kMaxWheels; ++i) putF32(b, 0.0f); // gear_steer_deg
-    for (int i = 0; i < net_fdm::kMaxWheels; ++i) putF32(b, 0.0f); // gear_compression_norm
+    for (int i = 0; i < net_fdm::kMaxWheels; ++i) putU32(b, 11 + i);            // wow
+    for (int i = 0; i < net_fdm::kMaxWheels; ++i) putF32(b, 1.1f + 0.1f * i);   // gear_pos_norm
+    for (int i = 0; i < net_fdm::kMaxWheels; ++i) putF32(b, 0.1f + 0.1f * i);   // gear_steer_deg
+    for (int i = 0; i < net_fdm::kMaxWheels; ++i) putF32(b, 0.01f + 0.01f * i); // gear_compression_norm
 
     putU32(b, 999);   // cur_time
     putI32(b, -1);    // warp
@@ -511,19 +516,28 @@ std::vector<uint8_t> buildValidPacket() {
 }
 
 /**
- * @brief Asserts every field of `a` and `b` matches.
+ * @brief Asserts `a` (decode()'s output) matches `b` (an oracle's output).
  *
  * Used to cross-check the live decode() (whole-buffer-reversal) against
  * this file's two independent reference decoders --
  * decodeWithBigEndianReader() and fieldByFieldDecode() -- on the same
- * input. All three are pure functions of the same bytes, so they should
- * come back bit-for-bit identical, not just close. buildValidPacket()
- * gives every field a distinct value specifically so a field landing in
- * the wrong member here would be caught, not masked by two fields sharing
- * a value.
+ * input. Every call site passes `a` = decode()'s result, `b` = one of the
+ * two oracles' results, in that order -- this function is NOT symmetric.
  *
- * @param a First packet to compare.
- * @param b Second packet to compare.
+ * Scalar fields are pure functions of the same bytes, so they must come
+ * back bit-for-bit identical, not just close. Array fields are the
+ * documented exception: decode() leaves array element order reversed
+ * (see net_fdm.h), while both oracles produce correct order, so `a`'s
+ * array elements are compared against `b`'s in REVERSE index order --
+ * `a[i]` against `b[N-1-i]`. This doesn't just tolerate the difference,
+ * it actively verifies it: if decode()'s arrays were ever corrupted some
+ * other way (not a clean reversal), this comparison would catch that too.
+ * buildValidPacket() gives every field -- and every array element --
+ * a distinct value specifically so a field or element landing in the
+ * wrong place would be caught, not masked by values that happen to match.
+ *
+ * @param a decode()'s output.
+ * @param b An oracle's output for the same input.
  */
 void checkPacketsMatch(const net_fdm::FGNetFDMReversed& a, const net_fdm::FGNetFDMReversed& b) {
     CHECK_EQ(a.version, b.version);
@@ -558,29 +572,31 @@ void checkPacketsMatch(const net_fdm::FGNetFDMReversed& a, const net_fdm::FGNetF
 
     CHECK_EQ(a.num_engines, b.num_engines);
     for (int i = 0; i < net_fdm::kMaxEngines; ++i) {
-        CHECK_EQ(a.eng_state[i], b.eng_state[i]);
-        CHECK_NEAR(a.rpm[i], b.rpm[i], 0.0);
-        CHECK_NEAR(a.fuel_flow[i], b.fuel_flow[i], 0.0);
-        CHECK_NEAR(a.fuel_px[i], b.fuel_px[i], 0.0);
-        CHECK_NEAR(a.egt[i], b.egt[i], 0.0);
-        CHECK_NEAR(a.cht[i], b.cht[i], 0.0);
-        CHECK_NEAR(a.mp_osi[i], b.mp_osi[i], 0.0);
-        CHECK_NEAR(a.tit[i], b.tit[i], 0.0);
-        CHECK_NEAR(a.oil_temp[i], b.oil_temp[i], 0.0);
-        CHECK_NEAR(a.oil_px[i], b.oil_px[i], 0.0);
+        int j = net_fdm::kMaxEngines - 1 - i; // decode()'s [i] is the oracle's [j]: reversed order
+        CHECK_EQ(a.eng_state[i], b.eng_state[j]);
+        CHECK_NEAR(a.rpm[i], b.rpm[j], 0.0);
+        CHECK_NEAR(a.fuel_flow[i], b.fuel_flow[j], 0.0);
+        CHECK_NEAR(a.fuel_px[i], b.fuel_px[j], 0.0);
+        CHECK_NEAR(a.egt[i], b.egt[j], 0.0);
+        CHECK_NEAR(a.cht[i], b.cht[j], 0.0);
+        CHECK_NEAR(a.mp_osi[i], b.mp_osi[j], 0.0);
+        CHECK_NEAR(a.tit[i], b.tit[j], 0.0);
+        CHECK_NEAR(a.oil_temp[i], b.oil_temp[j], 0.0);
+        CHECK_NEAR(a.oil_px[i], b.oil_px[j], 0.0);
     }
 
     CHECK_EQ(a.num_tanks, b.num_tanks);
     for (int i = 0; i < net_fdm::kMaxTanks; ++i) {
-        CHECK_NEAR(a.fuel_quantity[i], b.fuel_quantity[i], 0.0);
+        CHECK_NEAR(a.fuel_quantity[i], b.fuel_quantity[net_fdm::kMaxTanks - 1 - i], 0.0);
     }
 
     CHECK_EQ(a.num_wheels, b.num_wheels);
     for (int i = 0; i < net_fdm::kMaxWheels; ++i) {
-        CHECK_EQ(a.wow[i], b.wow[i]);
-        CHECK_NEAR(a.gear_pos[i], b.gear_pos[i], 0.0);
-        CHECK_NEAR(a.gear_steer[i], b.gear_steer[i], 0.0);
-        CHECK_NEAR(a.gear_compression[i], b.gear_compression[i], 0.0);
+        int j = net_fdm::kMaxWheels - 1 - i; // decode()'s [i] is the oracle's [j]: reversed order
+        CHECK_EQ(a.wow[i], b.wow[j]);
+        CHECK_NEAR(a.gear_pos[i], b.gear_pos[j], 0.0);
+        CHECK_NEAR(a.gear_steer[i], b.gear_steer[j], 0.0);
+        CHECK_NEAR(a.gear_compression[i], b.gear_compression[j], 0.0);
     }
 
     CHECK_EQ(a.cur_time, b.cur_time);
@@ -643,10 +659,12 @@ int main() {
     CHECK_NEAR(p.climb_rate, 14.1, 1e-4);
     CHECK_NEAR(p.slip_deg, 24.1, 1e-4);
     CHECK_EQ(p.num_engines, static_cast<uint32_t>(1));
-    CHECK_EQ(p.eng_state[0], static_cast<uint32_t>(2));
-    CHECK_NEAR(p.rpm[0], 2500.0, 1e-3);
+    // Wire order was eng_state = {21,22,23,24}; decode()[0] is known-reversed,
+    // so it holds the LAST wire element (24), not the first -- see net_fdm.h.
+    CHECK_EQ(p.eng_state[0], static_cast<uint32_t>(24));
+    CHECK_NEAR(p.rpm[0], 2504.0, 1e-3); // wire rpm = {2501..2504}; same reversal
     CHECK_EQ(p.num_tanks, static_cast<uint32_t>(2));
-    CHECK_NEAR(p.fuel_quantity[0], 100.0, 1e-4);
+    CHECK_NEAR(p.fuel_quantity[0], 104.0, 1e-4); // wire fuel_quantity = {101..104}
     CHECK_EQ(p.num_wheels, static_cast<uint32_t>(3));
     CHECK_EQ(p.cur_time, static_cast<uint32_t>(999));
     CHECK_EQ(p.warp, -1);

@@ -302,6 +302,20 @@ not by guessing:
   409+-byte read that `net_fdm::decode()`'s size check rejects as
   `WrongSize`, instead of a truncated 408 bytes of a bigger packet being
   silently decoded as if it were valid.
+- **A cross-check test is only as good as its ability to actually fail.**
+  [`tests/test_net_fdm.cpp`](tests/test_net_fdm.cpp) decodes every test
+  packet two ways -- the live `decode()` (packed struct + `ntoh*`) and
+  `decodeWithBigEndianReader()` (the retained byte-cursor decoder, kept
+  around specifically as a second, independently-structured implementation
+  to check the first against) -- and asserts every field matches. That's
+  only meaningful if the test can actually distinguish the two, so this was
+  verified directly: deliberately corrupted `BigEndianReader::u32()` (added
+  1 to every decoded value), confirmed `ctest` failed on the mismatch, then
+  reverted. Worth remembering as a pattern generally: when a rewrite makes a
+  prior implementation redundant on the live path, retaining it as a test
+  oracle is often better than deleting it -- but only if something actually
+  exercises it, and confirming that takes deliberately breaking one side and
+  watching the test catch it, not just reading the assertions.
 
 ## Future addition (not yet built)
 

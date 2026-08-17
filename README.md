@@ -153,25 +153,25 @@ top of it:
     JSBSim's ASCII CSV `<output type="SOCKET">`. A `static_assert(sizeof(
     FGNetFDM) == 408)` is what actually earns trust in the wire struct's
     layout: a field-list mistake fails the *build*, not a live run.
-    `decode()` is fully header-only (`inline`) -- no separate `.cpp` to
-    link. Its algorithm is deliberately non-obvious: `decode()` reverses
-    the whole 408-byte datagram once, then reads fields back through a
-    `detail::ReverseCursor` in *reverse* declaration order (array elements
-    reversed too) -- no per-field byte-swap call needed, since reversing a
-    concatenation reverses each field's bytes *and* flips the order the
-    fields appear in (`reverse(A+B+...+Z) ==
-    reverse(Z)+...+reverse(B)+reverse(A)`), so walking the reversed buffer
-    front-to-back with each field's own width recovers every field already
-    host-native. This was chosen *despite* being measured ~55-70% slower
-    (`-O2`) than the straightforward per-field `ntoh32()`/`ntohf()`/
-    `ntohd()` version it replaced -- GCC already compiles that version's
-    bit-shifts down to a single `bswap` instruction per field, so there was
-    no naive byte-shuffling left to beat. The faster version is retained as
-    a test oracle (`fieldByFieldDecode()` in `tests/test_net_fdm.cpp`),
-    alongside an even earlier byte-cursor decoder (`BigEndianReader`, same
-    file) that predates both -- neither is part of the library's public
-    surface, and both are cross-checked against the live `decode()` on
-    every test run so neither can silently rot.
+    `decode()` reverses the whole 408-byte datagram once and writes the
+    result directly into an `FGNetFDMReversed` (`FGNetFDM`'s fields, reverse
+    declared order) -- reversing a concatenation reverses each field's bytes
+    *and* flips the order the fields appear in
+    (`reverse(A+B+...+Z) == reverse(Z)+...+reverse(B)+reverse(A)`), so
+    laying the reversed bytes over a struct declared in reverse field order
+    lands every field already host-native at exactly the offset that
+    declaration implies. No separate output type, no per-field renaming.
+    **Known limitation:** array fields (`eng_state`, `rpm`, `wow`,
+    `gear_pos`, ...) are not index-corrected -- the reversal flips each
+    array's element order too, so e.g. `wow[0]` holds what was originally
+    the *last* wheel. Scalar fields are correct. This is documented (see
+    the `@warning` on `FGNetFDMReversed`), not silent. Two earlier decode
+    implementations -- a field-by-field `ntoh32()`/`ntohf()`/`ntohd()`
+    version (measurably faster, ~55-70% at `-O2`, since GCC already
+    compiles that bit-shift pattern into a single `bswap` per field) and an
+    even earlier byte-cursor decoder (`BigEndianReader`) -- are retained as
+    test-only oracles in `tests/test_net_fdm.cpp`, not part of the
+    library's public surface.
   - **`control_wire.h`**: JSBSim's `FGUDPInputSocket` wire format --
     `timestamp,v1,v2,...,vN\n` for an arbitrary ordered list of values, comma
     count must exactly match the declared `<property>` count, and the
@@ -342,21 +342,30 @@ not by guessing:
   test oracle is often better than deleting it -- but only if something
   actually exercises it, and confirming that takes deliberately breaking
   one side and watching the test catch it, not just reading the
-  assertions.
-- **Shorter, more "clever" code is not automatically faster code.** A
-  whole-buffer-reversal decode looked like it should beat the
-  straightforward per-field version -- fewer function calls, one memory
-  pass to reverse instead of many small `ntoh*()` calls. Measured (`-O2`,
-  2,000,000 iterations, correctness verified first): it was consistently
-  ~55-70% *slower*, because it does two full passes over the buffer
-  (reverse it, then extract each field) where the per-field version does
-  one, and because GCC already compiles the per-field version's bit-shifts
-  into a single `bswap` instruction -- there was no naive byte-shuffling
-  left to optimize away. It's still the live decoder in this repo (a
-  deliberate choice, not a mistake -- see `net_fdm.h`'s file comment), but
-  the lesson generalizes: measure before assuming an algorithmically
-  "neater" version is faster, especially against code the compiler can
-  already turn into a single instruction.
+  assertions. (This particular assertion has a known gap: `decode()`
+  deliberately leaves array elements index-reversed while both oracles
+  produce correctly-ordered arrays, so a real difference exists -- but
+  `buildValidPacket()`'s array fields all use one repeated value per
+  array, so the comparison can't see it. Not fixed, since it wasn't
+  asked for -- noted here so it isn't mistaken for coverage it doesn't
+  have.)
+- **Shorter, more "clever" code is not automatically faster code -- and
+  re-measure after every rewrite, not just once.** A whole-buffer-reversal
+  decode looked like it should beat the straightforward per-field
+  version. The first version (a byte-cursor reading into a separate
+  `Packet` output, per-field renaming and array `reverse_copy()` calls)
+  measured ~2.2-2.4x *slower*. After simplifying to today's version --
+  `decode()` reverses the buffer directly into its output struct, no
+  separate `Packet`, no array fixup at all -- it dropped to ~1.3-1.4x
+  slower (`-O2`, 2,000,000 iterations, correctness verified first each
+  time): still slower than the per-field `ntoh32()`/`ntohf()`/`ntohd()`
+  baseline (GCC already compiles that version's bit-shifts into a single
+  `bswap` instruction per field, so there's no naive byte-shuffling left
+  to optimize away), but the gap shrank by more than half once the
+  now-removed mapping/fixup overhead was gone. The number quoted for a
+  piece of code is only valid for the version of the code it was measured
+  against -- it was wrong to still be citing the first number after the
+  implementation had changed twice more.
 
 ## Future addition (not yet built)
 

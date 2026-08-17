@@ -92,13 +92,13 @@ public:
 
     /// Reads `N` consecutive `u32()` values into `arr`.
     template <std::size_t N>
-    void u32arr(std::array<uint32_t, N>& arr) {
+    void u32arr(uint32_t (&arr)[N]) {
         for (auto& x : arr) x = u32();
     }
 
     /// Reads `N` consecutive `f32()` values into `arr`.
     template <std::size_t N>
-    void f32arr(std::array<float, N>& arr) {
+    void f32arr(float (&arr)[N]) {
         for (auto& x : arr) x = f32();
     }
 
@@ -131,48 +131,48 @@ private:
  *
  * @param data Pointer to `size` bytes of raw datagram.
  * @param size Byte count of `data`.
- * @param out Receives the decoded Packet.
+ * @param out Receives the decoded FGNetFDMReversed.
  * @return net_fdm::DecodeResult::Ok, WrongSize, or WrongVersion.
  */
 net_fdm::DecodeResult decodeWithBigEndianReader(const uint8_t* data, std::size_t size,
-                                                 net_fdm::Packet& out) {
-    out = net_fdm::Packet{};
+                                                 net_fdm::FGNetFDMReversed& out) {
+    out = net_fdm::FGNetFDMReversed{};
 
     if (size != net_fdm::kPacketSize) {
         return net_fdm::DecodeResult::WrongSize;
     }
 
     BigEndianReader r(data, size);
-    net_fdm::Packet p;
+    net_fdm::FGNetFDMReversed p;
 
     p.version = r.u32();
     r.u32(); // padding, discarded
 
-    p.longitude_rad = r.f64();
-    p.latitude_rad = r.f64();
-    p.altitude_m = r.f64();
-    p.agl_m = r.f32();
-    p.phi_rad = r.f32();
-    p.theta_rad = r.f32();
-    p.psi_rad = r.f32();
-    p.alpha_rad = r.f32();
-    p.beta_rad = r.f32();
+    p.longitude = r.f64();
+    p.latitude = r.f64();
+    p.altitude = r.f64();
+    p.agl = r.f32();
+    p.phi = r.f32();
+    p.theta = r.f32();
+    p.psi = r.f32();
+    p.alpha = r.f32();
+    p.beta = r.f32();
 
-    p.phidot_rad_s = r.f32();
-    p.thetadot_rad_s = r.f32();
-    p.psidot_rad_s = r.f32();
-    p.vcas_kt = r.f32();
-    p.climb_rate_fps = r.f32();
-    p.v_north_fps = r.f32();
-    p.v_east_fps = r.f32();
-    p.v_down_fps = r.f32();
-    p.v_body_u_fps = r.f32();
-    p.v_body_v_fps = r.f32();
-    p.v_body_w_fps = r.f32();
+    p.phidot = r.f32();
+    p.thetadot = r.f32();
+    p.psidot = r.f32();
+    p.vcas = r.f32();
+    p.climb_rate = r.f32();
+    p.v_north = r.f32();
+    p.v_east = r.f32();
+    p.v_down = r.f32();
+    p.v_body_u = r.f32();
+    p.v_body_v = r.f32();
+    p.v_body_w = r.f32();
 
-    p.a_x_pilot_fps2 = r.f32();
-    p.a_y_pilot_fps2 = r.f32();
-    p.a_z_pilot_fps2 = r.f32();
+    p.A_X_pilot = r.f32();
+    p.A_Y_pilot = r.f32();
+    p.A_Z_pilot = r.f32();
 
     p.stall_warning = r.f32();
     p.slip_deg = r.f32();
@@ -180,41 +180,41 @@ net_fdm::DecodeResult decodeWithBigEndianReader(const uint8_t* data, std::size_t
     p.num_engines = r.u32();
     r.u32arr(p.eng_state);
     r.f32arr(p.rpm);
-    r.f32arr(p.fuel_flow_gph);
-    r.f32arr(p.fuel_px_psi);
-    r.f32arr(p.egt_degf);
-    r.f32arr(p.cht_degf);
-    r.f32arr(p.mp_inhg);
+    r.f32arr(p.fuel_flow);
+    r.f32arr(p.fuel_px);
+    r.f32arr(p.egt);
+    r.f32arr(p.cht);
+    r.f32arr(p.mp_osi);
     r.f32arr(p.tit);
-    r.f32arr(p.oil_temp_degf);
-    r.f32arr(p.oil_px_psi);
+    r.f32arr(p.oil_temp);
+    r.f32arr(p.oil_px);
 
     p.num_tanks = r.u32();
-    r.f32arr(p.fuel_quantity_lbs);
+    r.f32arr(p.fuel_quantity);
 
     p.num_wheels = r.u32();
     r.u32arr(p.wow);
-    r.f32arr(p.gear_pos_norm);
-    r.f32arr(p.gear_steer_deg);
-    r.f32arr(p.gear_compression_norm);
+    r.f32arr(p.gear_pos);
+    r.f32arr(p.gear_steer);
+    r.f32arr(p.gear_compression);
 
     p.cur_time = r.u32();
     p.warp = r.i32();
-    p.visibility_m = r.f32();
+    p.visibility = r.f32();
 
-    p.elevator_norm = r.f32();
-    p.elevator_trim_norm = r.f32();
-    p.left_flap_norm = r.f32();
-    p.right_flap_norm = r.f32();
-    p.left_aileron_norm = r.f32();
-    p.right_aileron_norm = r.f32();
-    p.rudder_norm = r.f32();
-    p.nose_wheel_norm = r.f32();
-    p.speedbrake_norm = r.f32();
-    p.spoilers_norm = r.f32();
+    p.elevator = r.f32();
+    p.elevator_trim_tab = r.f32();
+    p.left_flap = r.f32();
+    p.right_flap = r.f32();
+    p.left_aileron = r.f32();
+    p.right_aileron = r.f32();
+    p.rudder = r.f32();
+    p.nose_wheel = r.f32();
+    p.speedbrake = r.f32();
+    p.spoilers = r.f32();
 
     // Self-check: the reader must have consumed exactly kPacketSize bytes.
-    // If it didn't, the field list here and in net_fdm.h's FGNetFDM/Packet
+    // If it didn't, the field list here and in net_fdm.h's FGNetFDM/FGNetFDMReversed
     // don't agree on byte count and every offset past the mismatch is
     // wrong -- treat that as a decode failure rather than trusting
     // partially-misaligned data.
@@ -291,7 +291,7 @@ double ntohd(double v) {
  * @brief Test-only oracle: today's `net_fdm::decode()`, before whole-buffer-reversal replaced it.
  *
  * RETAINED AS REFERENCE, TEST-ONLY -- NOT PART OF THE LIBRARY. This is
- * exactly the body `net_fdm::decode(const uint8_t*, size_t, Packet&)` had
+ * exactly the body `net_fdm::decode(const uint8_t*, size_t, FGNetFDMReversed&)` had
  * before it became a whole-buffer-reversal decode: `memcpy` into a local
  * FGNetFDM, then byte-swap each field individually via ntoh32()/ntohf()/
  * ntohd() above. It's faster and keeps compile-time field-type checking
@@ -306,11 +306,11 @@ double ntohd(double v) {
  *
  * @param data Pointer to `size` bytes of raw datagram.
  * @param size Byte count of `data`.
- * @param out Receives the decoded Packet.
+ * @param out Receives the decoded FGNetFDMReversed.
  * @return net_fdm::DecodeResult::Ok, WrongSize, or WrongVersion.
  */
-net_fdm::DecodeResult fieldByFieldDecode(const uint8_t* data, std::size_t size, net_fdm::Packet& out) {
-    out = net_fdm::Packet{};
+net_fdm::DecodeResult fieldByFieldDecode(const uint8_t* data, std::size_t size, net_fdm::FGNetFDMReversed& out) {
+    out = net_fdm::FGNetFDMReversed{};
 
     if (size != net_fdm::kPacketSize) {
         return net_fdm::DecodeResult::WrongSize;
@@ -319,36 +319,36 @@ net_fdm::DecodeResult fieldByFieldDecode(const uint8_t* data, std::size_t size, 
     net_fdm::FGNetFDM raw;
     std::memcpy(&raw, data, sizeof(raw));
 
-    net_fdm::Packet p;
+    net_fdm::FGNetFDMReversed p;
 
     p.version = ntoh32(raw.version);
     // raw.padding is part of the wire layout only, never decoded.
 
-    p.longitude_rad = ntohd(raw.longitude);
-    p.latitude_rad = ntohd(raw.latitude);
-    p.altitude_m = ntohd(raw.altitude);
-    p.agl_m = ntohf(raw.agl);
-    p.phi_rad = ntohf(raw.phi);
-    p.theta_rad = ntohf(raw.theta);
-    p.psi_rad = ntohf(raw.psi);
-    p.alpha_rad = ntohf(raw.alpha);
-    p.beta_rad = ntohf(raw.beta);
+    p.longitude = ntohd(raw.longitude);
+    p.latitude = ntohd(raw.latitude);
+    p.altitude = ntohd(raw.altitude);
+    p.agl = ntohf(raw.agl);
+    p.phi = ntohf(raw.phi);
+    p.theta = ntohf(raw.theta);
+    p.psi = ntohf(raw.psi);
+    p.alpha = ntohf(raw.alpha);
+    p.beta = ntohf(raw.beta);
 
-    p.phidot_rad_s = ntohf(raw.phidot);
-    p.thetadot_rad_s = ntohf(raw.thetadot);
-    p.psidot_rad_s = ntohf(raw.psidot);
-    p.vcas_kt = ntohf(raw.vcas);
-    p.climb_rate_fps = ntohf(raw.climb_rate);
-    p.v_north_fps = ntohf(raw.v_north);
-    p.v_east_fps = ntohf(raw.v_east);
-    p.v_down_fps = ntohf(raw.v_down);
-    p.v_body_u_fps = ntohf(raw.v_body_u);
-    p.v_body_v_fps = ntohf(raw.v_body_v);
-    p.v_body_w_fps = ntohf(raw.v_body_w);
+    p.phidot = ntohf(raw.phidot);
+    p.thetadot = ntohf(raw.thetadot);
+    p.psidot = ntohf(raw.psidot);
+    p.vcas = ntohf(raw.vcas);
+    p.climb_rate = ntohf(raw.climb_rate);
+    p.v_north = ntohf(raw.v_north);
+    p.v_east = ntohf(raw.v_east);
+    p.v_down = ntohf(raw.v_down);
+    p.v_body_u = ntohf(raw.v_body_u);
+    p.v_body_v = ntohf(raw.v_body_v);
+    p.v_body_w = ntohf(raw.v_body_w);
 
-    p.a_x_pilot_fps2 = ntohf(raw.A_X_pilot);
-    p.a_y_pilot_fps2 = ntohf(raw.A_Y_pilot);
-    p.a_z_pilot_fps2 = ntohf(raw.A_Z_pilot);
+    p.A_X_pilot = ntohf(raw.A_X_pilot);
+    p.A_Y_pilot = ntohf(raw.A_Y_pilot);
+    p.A_Z_pilot = ntohf(raw.A_Z_pilot);
 
     p.stall_warning = ntohf(raw.stall_warning);
     p.slip_deg = ntohf(raw.slip_deg);
@@ -356,38 +356,38 @@ net_fdm::DecodeResult fieldByFieldDecode(const uint8_t* data, std::size_t size, 
     p.num_engines = ntoh32(raw.num_engines);
     for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.eng_state[i] = ntoh32(raw.eng_state[i]);
     for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.rpm[i] = ntohf(raw.rpm[i]);
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.fuel_flow_gph[i] = ntohf(raw.fuel_flow[i]);
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.fuel_px_psi[i] = ntohf(raw.fuel_px[i]);
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.egt_degf[i] = ntohf(raw.egt[i]);
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.cht_degf[i] = ntohf(raw.cht[i]);
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.mp_inhg[i] = ntohf(raw.mp_osi[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.fuel_flow[i] = ntohf(raw.fuel_flow[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.fuel_px[i] = ntohf(raw.fuel_px[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.egt[i] = ntohf(raw.egt[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.cht[i] = ntohf(raw.cht[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.mp_osi[i] = ntohf(raw.mp_osi[i]);
     for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.tit[i] = ntohf(raw.tit[i]);
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.oil_temp_degf[i] = ntohf(raw.oil_temp[i]);
-    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.oil_px_psi[i] = ntohf(raw.oil_px[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.oil_temp[i] = ntohf(raw.oil_temp[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.oil_px[i] = ntohf(raw.oil_px[i]);
 
     p.num_tanks = ntoh32(raw.num_tanks);
-    for (int i = 0; i < net_fdm::kMaxTanks; ++i) p.fuel_quantity_lbs[i] = ntohf(raw.fuel_quantity[i]);
+    for (int i = 0; i < net_fdm::kMaxTanks; ++i) p.fuel_quantity[i] = ntohf(raw.fuel_quantity[i]);
 
     p.num_wheels = ntoh32(raw.num_wheels);
     for (int i = 0; i < net_fdm::kMaxWheels; ++i) p.wow[i] = ntoh32(raw.wow[i]);
-    for (int i = 0; i < net_fdm::kMaxWheels; ++i) p.gear_pos_norm[i] = ntohf(raw.gear_pos[i]);
-    for (int i = 0; i < net_fdm::kMaxWheels; ++i) p.gear_steer_deg[i] = ntohf(raw.gear_steer[i]);
-    for (int i = 0; i < net_fdm::kMaxWheels; ++i) p.gear_compression_norm[i] = ntohf(raw.gear_compression[i]);
+    for (int i = 0; i < net_fdm::kMaxWheels; ++i) p.gear_pos[i] = ntohf(raw.gear_pos[i]);
+    for (int i = 0; i < net_fdm::kMaxWheels; ++i) p.gear_steer[i] = ntohf(raw.gear_steer[i]);
+    for (int i = 0; i < net_fdm::kMaxWheels; ++i) p.gear_compression[i] = ntohf(raw.gear_compression[i]);
 
     p.cur_time = ntoh32(raw.cur_time);
     p.warp = static_cast<int32_t>(ntoh32(static_cast<uint32_t>(raw.warp)));
-    p.visibility_m = ntohf(raw.visibility);
+    p.visibility = ntohf(raw.visibility);
 
-    p.elevator_norm = ntohf(raw.elevator);
-    p.elevator_trim_norm = ntohf(raw.elevator_trim_tab);
-    p.left_flap_norm = ntohf(raw.left_flap);
-    p.right_flap_norm = ntohf(raw.right_flap);
-    p.left_aileron_norm = ntohf(raw.left_aileron);
-    p.right_aileron_norm = ntohf(raw.right_aileron);
-    p.rudder_norm = ntohf(raw.rudder);
-    p.nose_wheel_norm = ntohf(raw.nose_wheel);
-    p.speedbrake_norm = ntohf(raw.speedbrake);
-    p.spoilers_norm = ntohf(raw.spoilers);
+    p.elevator = ntohf(raw.elevator);
+    p.elevator_trim_tab = ntohf(raw.elevator_trim_tab);
+    p.left_flap = ntohf(raw.left_flap);
+    p.right_flap = ntohf(raw.right_flap);
+    p.left_aileron = ntohf(raw.left_aileron);
+    p.right_aileron = ntohf(raw.right_aileron);
+    p.rudder = ntohf(raw.rudder);
+    p.nose_wheel = ntohf(raw.nose_wheel);
+    p.speedbrake = ntohf(raw.speedbrake);
+    p.spoilers = ntohf(raw.spoilers);
 
     out = p;
     if (p.version != net_fdm::kVersion) {
@@ -525,33 +525,33 @@ std::vector<uint8_t> buildValidPacket() {
  * @param a First packet to compare.
  * @param b Second packet to compare.
  */
-void checkPacketsMatch(const net_fdm::Packet& a, const net_fdm::Packet& b) {
+void checkPacketsMatch(const net_fdm::FGNetFDMReversed& a, const net_fdm::FGNetFDMReversed& b) {
     CHECK_EQ(a.version, b.version);
-    CHECK_NEAR(a.longitude_rad, b.longitude_rad, 0.0);
-    CHECK_NEAR(a.latitude_rad, b.latitude_rad, 0.0);
-    CHECK_NEAR(a.altitude_m, b.altitude_m, 0.0);
-    CHECK_NEAR(a.agl_m, b.agl_m, 0.0);
-    CHECK_NEAR(a.phi_rad, b.phi_rad, 0.0);
-    CHECK_NEAR(a.theta_rad, b.theta_rad, 0.0);
-    CHECK_NEAR(a.psi_rad, b.psi_rad, 0.0);
-    CHECK_NEAR(a.alpha_rad, b.alpha_rad, 0.0);
-    CHECK_NEAR(a.beta_rad, b.beta_rad, 0.0);
+    CHECK_NEAR(a.longitude, b.longitude, 0.0);
+    CHECK_NEAR(a.latitude, b.latitude, 0.0);
+    CHECK_NEAR(a.altitude, b.altitude, 0.0);
+    CHECK_NEAR(a.agl, b.agl, 0.0);
+    CHECK_NEAR(a.phi, b.phi, 0.0);
+    CHECK_NEAR(a.theta, b.theta, 0.0);
+    CHECK_NEAR(a.psi, b.psi, 0.0);
+    CHECK_NEAR(a.alpha, b.alpha, 0.0);
+    CHECK_NEAR(a.beta, b.beta, 0.0);
 
-    CHECK_NEAR(a.phidot_rad_s, b.phidot_rad_s, 0.0);
-    CHECK_NEAR(a.thetadot_rad_s, b.thetadot_rad_s, 0.0);
-    CHECK_NEAR(a.psidot_rad_s, b.psidot_rad_s, 0.0);
-    CHECK_NEAR(a.vcas_kt, b.vcas_kt, 0.0);
-    CHECK_NEAR(a.climb_rate_fps, b.climb_rate_fps, 0.0);
-    CHECK_NEAR(a.v_north_fps, b.v_north_fps, 0.0);
-    CHECK_NEAR(a.v_east_fps, b.v_east_fps, 0.0);
-    CHECK_NEAR(a.v_down_fps, b.v_down_fps, 0.0);
-    CHECK_NEAR(a.v_body_u_fps, b.v_body_u_fps, 0.0);
-    CHECK_NEAR(a.v_body_v_fps, b.v_body_v_fps, 0.0);
-    CHECK_NEAR(a.v_body_w_fps, b.v_body_w_fps, 0.0);
+    CHECK_NEAR(a.phidot, b.phidot, 0.0);
+    CHECK_NEAR(a.thetadot, b.thetadot, 0.0);
+    CHECK_NEAR(a.psidot, b.psidot, 0.0);
+    CHECK_NEAR(a.vcas, b.vcas, 0.0);
+    CHECK_NEAR(a.climb_rate, b.climb_rate, 0.0);
+    CHECK_NEAR(a.v_north, b.v_north, 0.0);
+    CHECK_NEAR(a.v_east, b.v_east, 0.0);
+    CHECK_NEAR(a.v_down, b.v_down, 0.0);
+    CHECK_NEAR(a.v_body_u, b.v_body_u, 0.0);
+    CHECK_NEAR(a.v_body_v, b.v_body_v, 0.0);
+    CHECK_NEAR(a.v_body_w, b.v_body_w, 0.0);
 
-    CHECK_NEAR(a.a_x_pilot_fps2, b.a_x_pilot_fps2, 0.0);
-    CHECK_NEAR(a.a_y_pilot_fps2, b.a_y_pilot_fps2, 0.0);
-    CHECK_NEAR(a.a_z_pilot_fps2, b.a_z_pilot_fps2, 0.0);
+    CHECK_NEAR(a.A_X_pilot, b.A_X_pilot, 0.0);
+    CHECK_NEAR(a.A_Y_pilot, b.A_Y_pilot, 0.0);
+    CHECK_NEAR(a.A_Z_pilot, b.A_Z_pilot, 0.0);
 
     CHECK_NEAR(a.stall_warning, b.stall_warning, 0.0);
     CHECK_NEAR(a.slip_deg, b.slip_deg, 0.0);
@@ -560,43 +560,43 @@ void checkPacketsMatch(const net_fdm::Packet& a, const net_fdm::Packet& b) {
     for (int i = 0; i < net_fdm::kMaxEngines; ++i) {
         CHECK_EQ(a.eng_state[i], b.eng_state[i]);
         CHECK_NEAR(a.rpm[i], b.rpm[i], 0.0);
-        CHECK_NEAR(a.fuel_flow_gph[i], b.fuel_flow_gph[i], 0.0);
-        CHECK_NEAR(a.fuel_px_psi[i], b.fuel_px_psi[i], 0.0);
-        CHECK_NEAR(a.egt_degf[i], b.egt_degf[i], 0.0);
-        CHECK_NEAR(a.cht_degf[i], b.cht_degf[i], 0.0);
-        CHECK_NEAR(a.mp_inhg[i], b.mp_inhg[i], 0.0);
+        CHECK_NEAR(a.fuel_flow[i], b.fuel_flow[i], 0.0);
+        CHECK_NEAR(a.fuel_px[i], b.fuel_px[i], 0.0);
+        CHECK_NEAR(a.egt[i], b.egt[i], 0.0);
+        CHECK_NEAR(a.cht[i], b.cht[i], 0.0);
+        CHECK_NEAR(a.mp_osi[i], b.mp_osi[i], 0.0);
         CHECK_NEAR(a.tit[i], b.tit[i], 0.0);
-        CHECK_NEAR(a.oil_temp_degf[i], b.oil_temp_degf[i], 0.0);
-        CHECK_NEAR(a.oil_px_psi[i], b.oil_px_psi[i], 0.0);
+        CHECK_NEAR(a.oil_temp[i], b.oil_temp[i], 0.0);
+        CHECK_NEAR(a.oil_px[i], b.oil_px[i], 0.0);
     }
 
     CHECK_EQ(a.num_tanks, b.num_tanks);
     for (int i = 0; i < net_fdm::kMaxTanks; ++i) {
-        CHECK_NEAR(a.fuel_quantity_lbs[i], b.fuel_quantity_lbs[i], 0.0);
+        CHECK_NEAR(a.fuel_quantity[i], b.fuel_quantity[i], 0.0);
     }
 
     CHECK_EQ(a.num_wheels, b.num_wheels);
     for (int i = 0; i < net_fdm::kMaxWheels; ++i) {
         CHECK_EQ(a.wow[i], b.wow[i]);
-        CHECK_NEAR(a.gear_pos_norm[i], b.gear_pos_norm[i], 0.0);
-        CHECK_NEAR(a.gear_steer_deg[i], b.gear_steer_deg[i], 0.0);
-        CHECK_NEAR(a.gear_compression_norm[i], b.gear_compression_norm[i], 0.0);
+        CHECK_NEAR(a.gear_pos[i], b.gear_pos[i], 0.0);
+        CHECK_NEAR(a.gear_steer[i], b.gear_steer[i], 0.0);
+        CHECK_NEAR(a.gear_compression[i], b.gear_compression[i], 0.0);
     }
 
     CHECK_EQ(a.cur_time, b.cur_time);
     CHECK_EQ(a.warp, b.warp);
-    CHECK_NEAR(a.visibility_m, b.visibility_m, 0.0);
+    CHECK_NEAR(a.visibility, b.visibility, 0.0);
 
-    CHECK_NEAR(a.elevator_norm, b.elevator_norm, 0.0);
-    CHECK_NEAR(a.elevator_trim_norm, b.elevator_trim_norm, 0.0);
-    CHECK_NEAR(a.left_flap_norm, b.left_flap_norm, 0.0);
-    CHECK_NEAR(a.right_flap_norm, b.right_flap_norm, 0.0);
-    CHECK_NEAR(a.left_aileron_norm, b.left_aileron_norm, 0.0);
-    CHECK_NEAR(a.right_aileron_norm, b.right_aileron_norm, 0.0);
-    CHECK_NEAR(a.rudder_norm, b.rudder_norm, 0.0);
-    CHECK_NEAR(a.nose_wheel_norm, b.nose_wheel_norm, 0.0);
-    CHECK_NEAR(a.speedbrake_norm, b.speedbrake_norm, 0.0);
-    CHECK_NEAR(a.spoilers_norm, b.spoilers_norm, 0.0);
+    CHECK_NEAR(a.elevator, b.elevator, 0.0);
+    CHECK_NEAR(a.elevator_trim_tab, b.elevator_trim_tab, 0.0);
+    CHECK_NEAR(a.left_flap, b.left_flap, 0.0);
+    CHECK_NEAR(a.right_flap, b.right_flap, 0.0);
+    CHECK_NEAR(a.left_aileron, b.left_aileron, 0.0);
+    CHECK_NEAR(a.right_aileron, b.right_aileron, 0.0);
+    CHECK_NEAR(a.rudder, b.rudder, 0.0);
+    CHECK_NEAR(a.nose_wheel, b.nose_wheel, 0.0);
+    CHECK_NEAR(a.speedbrake, b.speedbrake, 0.0);
+    CHECK_NEAR(a.spoilers, b.spoilers, 0.0);
 }
 
 } // namespace
@@ -625,47 +625,47 @@ int main() {
     CHECK_EQ(offsetof(net_fdm::FGNetFDM, elevator), static_cast<std::size_t>(368));
 
     // Happy path: every field lands where it belongs.
-    net_fdm::Packet p;
+    net_fdm::FGNetFDMReversed p;
     net_fdm::DecodeResult r = net_fdm::decode(valid.data(), valid.size(), p);
     CHECK(r == net_fdm::DecodeResult::Ok);
 
     CHECK_EQ(p.version, net_fdm::kVersion);
-    CHECK_NEAR(p.longitude_rad, 1.111, 1e-9);
-    CHECK_NEAR(p.latitude_rad, 2.222, 1e-9);
-    CHECK_NEAR(p.altitude_m, 3333.0, 1e-9);
-    CHECK_NEAR(p.agl_m, 4.4, 1e-5);
-    CHECK_NEAR(p.phi_rad, 5.5, 1e-5);
-    CHECK_NEAR(p.theta_rad, 6.6, 1e-5);
-    CHECK_NEAR(p.psi_rad, 7.7, 1e-5);
-    CHECK_NEAR(p.alpha_rad, 8.8, 1e-5);
-    CHECK_NEAR(p.beta_rad, 9.9, 1e-5);
-    CHECK_NEAR(p.vcas_kt, 130.0, 1e-4);
-    CHECK_NEAR(p.climb_rate_fps, 14.1, 1e-4);
+    CHECK_NEAR(p.longitude, 1.111, 1e-9);
+    CHECK_NEAR(p.latitude, 2.222, 1e-9);
+    CHECK_NEAR(p.altitude, 3333.0, 1e-9);
+    CHECK_NEAR(p.agl, 4.4, 1e-5);
+    CHECK_NEAR(p.phi, 5.5, 1e-5);
+    CHECK_NEAR(p.theta, 6.6, 1e-5);
+    CHECK_NEAR(p.psi, 7.7, 1e-5);
+    CHECK_NEAR(p.alpha, 8.8, 1e-5);
+    CHECK_NEAR(p.beta, 9.9, 1e-5);
+    CHECK_NEAR(p.vcas, 130.0, 1e-4);
+    CHECK_NEAR(p.climb_rate, 14.1, 1e-4);
     CHECK_NEAR(p.slip_deg, 24.1, 1e-4);
     CHECK_EQ(p.num_engines, static_cast<uint32_t>(1));
     CHECK_EQ(p.eng_state[0], static_cast<uint32_t>(2));
     CHECK_NEAR(p.rpm[0], 2500.0, 1e-3);
     CHECK_EQ(p.num_tanks, static_cast<uint32_t>(2));
-    CHECK_NEAR(p.fuel_quantity_lbs[0], 100.0, 1e-4);
+    CHECK_NEAR(p.fuel_quantity[0], 100.0, 1e-4);
     CHECK_EQ(p.num_wheels, static_cast<uint32_t>(3));
     CHECK_EQ(p.cur_time, static_cast<uint32_t>(999));
     CHECK_EQ(p.warp, -1);
-    CHECK_NEAR(p.visibility_m, 25000.0, 1e-2);
-    CHECK_NEAR(p.elevator_norm, 0.10, 1e-5);
-    CHECK_NEAR(p.rudder_norm, 0.70, 1e-5);
-    CHECK_NEAR(p.spoilers_norm, 1.00, 1e-5);
+    CHECK_NEAR(p.visibility, 25000.0, 1e-2);
+    CHECK_NEAR(p.elevator, 0.10, 1e-5);
+    CHECK_NEAR(p.rudder, 0.70, 1e-5);
+    CHECK_NEAR(p.spoilers, 1.00, 1e-5);
 
     // Wrong size, both directions.
     {
         std::vector<uint8_t> tooShort(valid.begin(), valid.end() - 1);
-        net_fdm::Packet out;
+        net_fdm::FGNetFDMReversed out;
         CHECK(net_fdm::decode(tooShort.data(), tooShort.size(), out) ==
               net_fdm::DecodeResult::WrongSize);
     }
     {
         std::vector<uint8_t> tooLong = valid;
         tooLong.push_back(0);
-        net_fdm::Packet out;
+        net_fdm::FGNetFDMReversed out;
         CHECK(net_fdm::decode(tooLong.data(), tooLong.size(), out) ==
               net_fdm::DecodeResult::WrongSize);
     }
@@ -680,12 +680,12 @@ int main() {
         badVersion[1] = 0;
         badVersion[2] = 0;
         badVersion[3] = 7; // version 7, not 24
-        net_fdm::Packet out;
+        net_fdm::FGNetFDMReversed out;
         CHECK(net_fdm::decode(badVersion.data(), badVersion.size(), out) ==
               net_fdm::DecodeResult::WrongVersion);
         CHECK_EQ(out.version, static_cast<uint32_t>(7));
-        CHECK_NEAR(out.altitude_m, 3333.0, 1e-9);
-        CHECK_NEAR(out.rudder_norm, 0.70, 1e-5);
+        CHECK_NEAR(out.altitude, 3333.0, 1e-9);
+        CHECK_NEAR(out.rudder, 0.70, 1e-5);
     }
 
     // The struct-taking overload: a caller that already recv()'d straight
@@ -696,11 +696,11 @@ int main() {
         CHECK_EQ(valid.size(), sizeof(raw));
         std::memcpy(&raw, valid.data(), sizeof(raw));
 
-        net_fdm::Packet out;
+        net_fdm::FGNetFDMReversed out;
         net_fdm::DecodeResult r3 = net_fdm::decode(raw, out);
         CHECK(r3 == net_fdm::DecodeResult::Ok);
-        CHECK_NEAR(out.longitude_rad, 1.111, 1e-9);
-        CHECK_NEAR(out.vcas_kt, 130.0, 1e-4);
+        CHECK_NEAR(out.longitude, 1.111, 1e-9);
+        CHECK_NEAR(out.vcas, 130.0, 1e-4);
         CHECK_EQ(out.num_wheels, static_cast<uint32_t>(3));
     }
 
@@ -716,9 +716,9 @@ int main() {
     // the class of mistake an independent, differently-structured decoder
     // is positioned to catch.
     {
-        net_fdm::Packet viaDecode;
-        net_fdm::Packet viaBigEndianReader;
-        net_fdm::Packet viaFieldByField;
+        net_fdm::FGNetFDMReversed viaDecode;
+        net_fdm::FGNetFDMReversed viaBigEndianReader;
+        net_fdm::FGNetFDMReversed viaFieldByField;
         CHECK(net_fdm::decode(valid.data(), valid.size(), viaDecode) ==
               net_fdm::DecodeResult::Ok);
         CHECK(decodeWithBigEndianReader(valid.data(), valid.size(), viaBigEndianReader) ==
@@ -731,9 +731,9 @@ int main() {
     {
         std::vector<uint8_t> badVersion = valid;
         badVersion[3] = 7; // version 7, not 24 -- see the WrongVersion case above
-        net_fdm::Packet viaDecode;
-        net_fdm::Packet viaBigEndianReader;
-        net_fdm::Packet viaFieldByField;
+        net_fdm::FGNetFDMReversed viaDecode;
+        net_fdm::FGNetFDMReversed viaBigEndianReader;
+        net_fdm::FGNetFDMReversed viaFieldByField;
         CHECK(net_fdm::decode(badVersion.data(), badVersion.size(), viaDecode) ==
               net_fdm::DecodeResult::WrongVersion);
         CHECK(decodeWithBigEndianReader(badVersion.data(), badVersion.size(), viaBigEndianReader) ==
@@ -745,9 +745,9 @@ int main() {
     }
     {
         std::vector<uint8_t> tooShort(valid.begin(), valid.end() - 1);
-        net_fdm::Packet viaDecode;
-        net_fdm::Packet viaBigEndianReader;
-        net_fdm::Packet viaFieldByField;
+        net_fdm::FGNetFDMReversed viaDecode;
+        net_fdm::FGNetFDMReversed viaBigEndianReader;
+        net_fdm::FGNetFDMReversed viaFieldByField;
         CHECK(net_fdm::decode(tooShort.data(), tooShort.size(), viaDecode) ==
               net_fdm::DecodeResult::WrongSize);
         CHECK(decodeWithBigEndianReader(tooShort.data(), tooShort.size(), viaBigEndianReader) ==
@@ -762,13 +762,13 @@ int main() {
     // otherwise a caller that forgets to check the DecodeResult sees stale
     // or half-written data and mistakes it for a real (if odd) flight state.
     {
-        net_fdm::Packet out;
-        out.altitude_m = 12345.0; // pre-poison with a value decode must clear
+        net_fdm::FGNetFDMReversed out;
+        out.altitude = 12345.0; // pre-poison with a value decode must clear
         out.num_engines = 4;
         std::vector<uint8_t> bad(10, 0xFF);
         net_fdm::DecodeResult r2 = net_fdm::decode(bad.data(), bad.size(), out);
         CHECK(r2 == net_fdm::DecodeResult::WrongSize);
-        CHECK_NEAR(out.altitude_m, 0.0, 1e-12);
+        CHECK_NEAR(out.altitude, 0.0, 1e-12);
         CHECK_EQ(out.num_engines, static_cast<uint32_t>(0));
     }
 

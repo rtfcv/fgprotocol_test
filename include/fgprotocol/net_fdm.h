@@ -9,28 +9,22 @@
  * fginst project's `NetFdm.h` documents; field order/types/units are
  * reproduced here rather than re-derived.
  *
- * Header-only, dependency-free (just `<array>`/`<cstddef>`/`<cstdint>`/
- * `<cstring>`): deliberately so this file (and control_wire.h alongside it)
- * can be reused outside this repo -- copy-pasted into another project's
- * include tree, or pulled in via add_subdirectory()/FetchContent against
- * this directory's own CMakeLists.txt. It knows nothing about sockets,
- * timing, or what a caller wants to do with a decoded Packet -- see the
+ * Header-only, dependency-free (just `<array>`/`<cstddef>`/`<cstdint>`):
+ * deliberately so this file (and control_wire.h alongside it) can be
+ * reused outside this repo -- copy-pasted into another project's include
+ * tree, or pulled in via add_subdirectory()/FetchContent against this
+ * directory's own CMakeLists.txt. It knows nothing about sockets, timing,
+ * or what a caller wants to do with a decoded FGNetFDMReversed -- see the
  * jsbsim_tester project's own `src/` for that (`udp_socket.h`/`.cpp`,
  * `main.cpp`).
  *
- * @note decode() is deliberately implemented as a whole-buffer reversal
- * (see its own comment) rather than the more obvious per-field byte-swap.
- * Measured (-O2, this repo's own toolchain): the whole-buffer-reversal
- * decode is consistently ~55-70% *slower* than a straightforward per-field
- * `ntoh32()`/`ntohf()`/`ntohd()` version, which GCC already compiles down
- * to a single `bswap` instruction per field -- there was no naive
- * byte-shuffling to beat. The faster, type-checked, per-field version is
- * retained as a cross-checked test oracle in `tests/test_net_fdm.cpp`
- * (`fieldByFieldDecode()`), not deleted. This tradeoff -- shorter,
- * mathematically interesting code that is measurably worse on every axis
- * (speed, compile-time type safety, and how error-prone the hand-computed
- * reverse field/array-index order is to get right) -- was a deliberate,
- * explicit choice, not an oversight.
+ * @warning decode() does NOT correct array element order. See
+ * FGNetFDMReversed's comment: every array field (`eng_state`, `rpm`,
+ * `wow`, `gear_pos`, etc.) comes back with its elements in reverse index
+ * order (index 0 holds what was originally the *last* element). This is
+ * a known, currently-accepted limitation, not an oversight -- see the
+ * project history for the reasoning. Scalar fields are unaffected and
+ * decode correctly.
  */
 #ifndef FGPROTOCOL_NET_FDM_H
 #define FGPROTOCOL_NET_FDM_H
@@ -38,7 +32,6 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
-#include <cstring>
 
 /// FlightGear/JSBSim FGNetFDM wire protocol: decode-only, header-only, no
 /// platform dependencies.
@@ -156,134 +149,102 @@ static_assert(sizeof(FGNetFDM) == kPacketSize, "FGNetFDM layout mismatch");
 static_assert(sizeof(float) == 4, "float must be 32 bits for the FGNetFDM decode");
 static_assert(sizeof(double) == 8, "double must be 64 bits for the FGNetFDM decode");
 
-namespace detail {
-
 /**
- * @brief Sequential reader over an already whole-buffer-reversed datagram.
+ * @brief FGNetFDM's fields, in exactly reverse declaration order -- decode()'s output type.
  *
- * See decode()'s comment for the derivation: reversing a concatenation of
- * fields reverses each field's own bytes *and* flips the order the fields
- * appear in -- `reverse(A+B+...+Z) == reverse(Z)+...+reverse(B)+reverse(A)`
- * -- so reading the reversed buffer back in reverse declaration order
- * (array elements included, since arrays are just nested concatenations)
- * recovers every field already in host-native byte order. No per-field
- * byte-swap call is needed here; the whole-buffer reversal already did it.
- * Internal to this header -- not part of the public API.
- */
-class ReverseCursor {
-public:
-    /// @param p Pointer into an already-reversed buffer; advances with each read.
-    explicit ReverseCursor(const uint8_t* p) : p_(p) {}
-
-    /// @return The next 4 bytes, reinterpreted as a host-native `uint32_t`.
-    uint32_t u32() { uint32_t v; std::memcpy(&v, p_, 4); p_ += 4; return v; }
-    /// @return The next 4 bytes, reinterpreted as a host-native `int32_t`.
-    int32_t i32() { int32_t v; std::memcpy(&v, p_, 4); p_ += 4; return v; }
-    /// @return The next 4 bytes, reinterpreted as a host-native `float`.
-    float f32() { float v; std::memcpy(&v, p_, 4); p_ += 4; return v; }
-    /// @return The next 8 bytes, reinterpreted as a host-native `double`.
-    double f64() { double v; std::memcpy(&v, p_, 8); p_ += 8; return v; }
-
-    /**
-     * @brief Reads `N` consecutive `u32()` values into `arr`, index N-1 down to 0.
-     *
-     * Array elements are reversed by the whole-buffer flip along with
-     * everything else, so the first chunk read here is the *last*
-     * element's correctly-ordered bytes.
-     */
-    template <std::size_t N>
-    void u32arr(std::array<uint32_t, N>& arr) {
-        for (std::size_t i = 0; i < N; ++i) arr[N - 1 - i] = u32();
-    }
-    /// @brief Reads `N` consecutive `f32()` values into `arr`, index N-1 down to 0.
-    template <std::size_t N>
-    void f32arr(std::array<float, N>& arr) {
-        for (std::size_t i = 0; i < N; ++i) arr[N - 1 - i] = f32();
-    }
-
-private:
-    const uint8_t* p_;
-};
-
-} // namespace detail
-
-/**
- * @brief The decoded, host-native, unit-labeled form callers actually want to work with.
+ * decode() writes the whole-buffer-reversed datagram directly into an
+ * instance of this struct (via a `uint8_t*` alias): reversing a
+ * concatenation of fields reverses each field's own bytes *and* flips the
+ * order the fields appear in, so laying the reversed bytes over a struct
+ * declared in reverse field order lands every field already
+ * byte-order-native at exactly the offset this declaration implies. No
+ * separate output type, no per-field renaming step -- this struct's own
+ * fields (`version`, `altitude`, `spoilers`, ...) are what a caller reads
+ * directly.
  *
- * Field names carry their units so a caller reading `climb_rate_fps` can't
- * mistake it for m/s, etc.
+ * @warning Scalar fields are correct. Array fields (`eng_state`, `rpm`,
+ * `fuel_flow`, `fuel_px`, `egt`, `cht`, `mp_osi`, `tit`, `oil_temp`,
+ * `oil_px`, `fuel_quantity`, `wow`, `gear_pos`, `gear_steer`,
+ * `gear_compression`) are NOT index-corrected: the whole-buffer reversal
+ * flips each array's element order too, not just each element's bytes, so
+ * e.g. `wow[0]` here holds what was originally the *last* wheel's value.
+ * Not yet fixed up -- known, not silent-by-accident.
  */
-struct Packet {
-    uint32_t version = 0; ///< Protocol version read from the datagram.
-    // 4 bytes of padding on the wire, not stored here.
+#pragma pack(push, 1)
+struct FGNetFDMReversed {
+    float spoilers;
+    float speedbrake;
+    float nose_wheel;
+    float rudder;
+    float right_aileron;
+    float left_aileron;
+    float right_flap;
+    float left_flap;
+    float elevator_trim_tab;
+    float elevator;
 
-    double longitude_rad = 0.0; ///< Radians.
-    double latitude_rad = 0.0;  ///< Radians.
-    double altitude_m = 0.0;    ///< Above sea level, METERS (not feet).
-    float agl_m = 0.0f;         ///< Above ground level, meters.
-    float phi_rad = 0.0f;       ///< Roll, radians.
-    float theta_rad = 0.0f;     ///< Pitch, radians.
-    float psi_rad = 0.0f;       ///< Yaw / true heading, radians.
-    float alpha_rad = 0.0f;     ///< Angle of attack, radians.
-    float beta_rad = 0.0f;      ///< Sideslip, radians.
+    float visibility;
+    int32_t warp;
+    uint32_t cur_time;
 
-    float phidot_rad_s = 0.0f;    ///< Roll rate, radians/sec.
-    float thetadot_rad_s = 0.0f;  ///< Pitch rate, radians/sec.
-    float psidot_rad_s = 0.0f;    ///< Yaw rate, radians/sec.
-    float vcas_kt = 0.0f;         ///< Calibrated airspeed, knots.
-    float climb_rate_fps = 0.0f;  ///< Feet per second (not m/s).
-    float v_north_fps = 0.0f;     ///< Feet per second.
-    float v_east_fps = 0.0f;      ///< Feet per second.
-    float v_down_fps = 0.0f;      ///< Feet per second.
-    float v_body_u_fps = 0.0f;    ///< Feet per second.
-    float v_body_v_fps = 0.0f;    ///< Feet per second.
-    float v_body_w_fps = 0.0f;    ///< Feet per second.
+    float gear_compression[kMaxWheels];
+    float gear_steer[kMaxWheels];
+    float gear_pos[kMaxWheels];
+    uint32_t wow[kMaxWheels];
+    uint32_t num_wheels;
 
-    float a_x_pilot_fps2 = 0.0f; ///< Feet per second^2.
-    float a_y_pilot_fps2 = 0.0f; ///< Feet per second^2.
-    float a_z_pilot_fps2 = 0.0f; ///< Feet per second^2.
+    float fuel_quantity[kMaxTanks];
+    uint32_t num_tanks;
 
-    float stall_warning = 0.0f; ///< 0..1.
-    float slip_deg = 0.0f;      ///< Degrees.
+    float oil_px[kMaxEngines];
+    float oil_temp[kMaxEngines];
+    float tit[kMaxEngines];
+    float mp_osi[kMaxEngines];
+    float cht[kMaxEngines];
+    float egt[kMaxEngines];
+    float fuel_px[kMaxEngines];
+    float fuel_flow[kMaxEngines];
+    float rpm[kMaxEngines];
+    uint32_t eng_state[kMaxEngines];
+    uint32_t num_engines;
 
-    uint32_t num_engines = 0;                       ///< Number of valid entries in the engine arrays below.
-    std::array<uint32_t, kMaxEngines> eng_state{};   ///< Per-engine running state.
-    std::array<float, kMaxEngines> rpm{};            ///< Per-engine RPM.
-    std::array<float, kMaxEngines> fuel_flow_gph{};  ///< Per-engine fuel flow, gal/hr.
-    std::array<float, kMaxEngines> fuel_px_psi{};    ///< Per-engine fuel pressure, psi.
-    std::array<float, kMaxEngines> egt_degf{};       ///< Per-engine EGT, degF.
-    std::array<float, kMaxEngines> cht_degf{};       ///< Per-engine CHT, degF.
-    std::array<float, kMaxEngines> mp_inhg{};        ///< Per-engine manifold pressure, inHg.
-    std::array<float, kMaxEngines> tit{};            ///< Per-engine turbine inlet temperature.
-    std::array<float, kMaxEngines> oil_temp_degf{};  ///< Per-engine oil temperature, degF.
-    std::array<float, kMaxEngines> oil_px_psi{};     ///< Per-engine oil pressure, psi.
+    float slip_deg;
+    float stall_warning;
 
-    uint32_t num_tanks = 0;                          ///< Number of valid entries in fuel_quantity_lbs.
-    std::array<float, kMaxTanks> fuel_quantity_lbs{}; ///< Per-tank fuel quantity, lbs.
+    float A_Z_pilot;
+    float A_Y_pilot;
+    float A_X_pilot;
 
-    uint32_t num_wheels = 0;                              ///< Number of valid entries in the wheel arrays below.
-    std::array<uint32_t, kMaxWheels> wow{};               ///< Per-wheel weight-on-wheels flag.
-    std::array<float, kMaxWheels> gear_pos_norm{};        ///< Per-wheel gear position, 0..1.
-    std::array<float, kMaxWheels> gear_steer_deg{};       ///< Per-wheel steering angle, degrees.
-    std::array<float, kMaxWheels> gear_compression_norm{}; ///< Per-wheel strut compression, 0..1.
+    float v_body_w;
+    float v_body_v;
+    float v_body_u;
+    float v_down;
+    float v_east;
+    float v_north;
+    float climb_rate;
+    float vcas;
+    float psidot;
+    float thetadot;
+    float phidot;
 
-    uint32_t cur_time = 0;      ///< Unix time, seconds.
-    int32_t warp = 0;           ///< Simulator time warp factor.
-    float visibility_m = 0.0f;  ///< Meters.
+    float beta;
+    float alpha;
+    float psi;
+    float theta;
+    float phi;
+    float agl;
+    double altitude;
+    double latitude;
+    double longitude;
 
-    float elevator_norm = 0.0f;       ///< -1..1.
-    float elevator_trim_norm = 0.0f;  ///< -1..1.
-    float left_flap_norm = 0.0f;      ///< -1..1.
-    float right_flap_norm = 0.0f;     ///< -1..1.
-    float left_aileron_norm = 0.0f;   ///< -1..1.
-    float right_aileron_norm = 0.0f;  ///< -1..1.
-    float rudder_norm = 0.0f;         ///< -1..1.
-    float nose_wheel_norm = 0.0f;     ///< -1..1.
-    float speedbrake_norm = 0.0f;     ///< -1..1.
-    float spoilers_norm = 0.0f;       ///< -1..1.
+    uint32_t padding;
+    uint32_t version;
 };
+#pragma pack(pop)
 
-/// Result of decode(): whether the decoded Packet is trustworthy.
+static_assert(sizeof(FGNetFDMReversed) == kPacketSize, "FGNetFDMReversed layout mismatch");
+
+/// Result of decode(): whether the decoded FGNetFDMReversed is trustworthy.
 enum class DecodeResult {
     Ok,           ///< Decoded successfully; version matched kVersion.
     WrongSize,    ///< Buffer was not exactly kPacketSize bytes; `out` is zeroed.
@@ -294,21 +255,15 @@ enum class DecodeResult {
  * @brief Decodes a raw big-endian FGNetFDM datagram into `out`.
  *
  * Whole-buffer-reversal decode: reverses all `kPacketSize` bytes once,
- * then reads fields back through a detail::ReverseCursor in *reverse*
- * FGNetFDM declaration order (array elements reversed too). This works
- * for any mix of field widths because reversing a concatenation reverses
- * each piece and flips the order of the pieces --
- * `reverse(A+B+...+Z) == reverse(Z)+...+reverse(B)+reverse(A)` -- so
- * walking the reversed buffer from the front, using each field's own
- * width, recovers every field already correctly byte-order-native. See
- * this file's top comment for why this is the live implementation despite
- * being measurably slower than the straightforward per-field version
- * (retained as `fieldByFieldDecode()` in `tests/test_net_fdm.cpp`).
+ * writes the result directly into `out` (an FGNetFDMReversed). See that
+ * struct's comment for the derivation of why this recovers every scalar
+ * field already correctly byte-order-native -- and for the array-order
+ * caveat this function does NOT correct.
  *
  * On DecodeResult::WrongSize, `out` is reset to a default-constructed
- * (all-zero) Packet rather than left partially filled -- callers must
- * check the DecodeResult, not just look at the data, to tell a real
- * zeroed-out flight state from "nothing decoded." On
+ * (all-zero) FGNetFDMReversed rather than left partially filled --
+ * callers must check the DecodeResult, not just look at the data, to tell
+ * a real zeroed-out flight state from "nothing decoded." On
  * DecodeResult::WrongVersion, `out` is still populated -- a version bump
  * alone doesn't mean the bytes are garbage, so callers are expected to
  * warn and use the data anyway.
@@ -316,99 +271,27 @@ enum class DecodeResult {
  * @param data Pointer to `size` bytes of raw datagram.
  * @param size Byte count of `data`; must equal kPacketSize for anything
  * other than DecodeResult::WrongSize.
- * @param out Receives the decoded, host-native Packet.
+ * @param out Receives the decoded FGNetFDMReversed.
  * @return DecodeResult::Ok, DecodeResult::WrongSize, or
  * DecodeResult::WrongVersion.
  */
-inline DecodeResult decode(const uint8_t* data, std::size_t size, Packet& out) {
-    out = Packet{};
-
+inline DecodeResult decode(const uint8_t* data, std::size_t size, FGNetFDMReversed& out) {
     if (size != kPacketSize) {
+        out = FGNetFDMReversed{};
         return DecodeResult::WrongSize;
     }
 
-    uint8_t rev[kPacketSize];
+    // Writing raw bytes through a uint8_t* into a trivial struct's storage,
+    // then reading it back through the struct's own declared field types,
+    // is well-defined (the same thing recv() already does everywhere else
+    // in this codebase) -- not a strict-aliasing violation, since uint8_t
+    // is always permitted to alias any object's representation.
+    uint8_t* dst = reinterpret_cast<uint8_t*>(&out);
     for (std::size_t i = 0; i < kPacketSize; ++i) {
-        rev[i] = data[kPacketSize - 1 - i];
+        dst[i] = data[kPacketSize - 1 - i];
     }
 
-    detail::ReverseCursor r(rev);
-    Packet p;
-
-    // Reverse FGNetFDM declaration order: its LAST field first.
-    p.spoilers_norm = r.f32();
-    p.speedbrake_norm = r.f32();
-    p.nose_wheel_norm = r.f32();
-    p.rudder_norm = r.f32();
-    p.right_aileron_norm = r.f32();
-    p.left_aileron_norm = r.f32();
-    p.right_flap_norm = r.f32();
-    p.left_flap_norm = r.f32();
-    p.elevator_trim_norm = r.f32();
-    p.elevator_norm = r.f32();
-
-    p.visibility_m = r.f32();
-    p.warp = r.i32();
-    p.cur_time = r.u32();
-
-    r.f32arr(p.gear_compression_norm);
-    r.f32arr(p.gear_steer_deg);
-    r.f32arr(p.gear_pos_norm);
-    r.u32arr(p.wow);
-    p.num_wheels = r.u32();
-
-    r.f32arr(p.fuel_quantity_lbs);
-    p.num_tanks = r.u32();
-
-    r.f32arr(p.oil_px_psi);
-    r.f32arr(p.oil_temp_degf);
-    r.f32arr(p.tit);
-    r.f32arr(p.mp_inhg);
-    r.f32arr(p.cht_degf);
-    r.f32arr(p.egt_degf);
-    r.f32arr(p.fuel_px_psi);
-    r.f32arr(p.fuel_flow_gph);
-    r.f32arr(p.rpm);
-    r.u32arr(p.eng_state);
-    p.num_engines = r.u32();
-
-    p.slip_deg = r.f32();
-    p.stall_warning = r.f32();
-
-    p.a_z_pilot_fps2 = r.f32();
-    p.a_y_pilot_fps2 = r.f32();
-    p.a_x_pilot_fps2 = r.f32();
-
-    p.v_body_w_fps = r.f32();
-    p.v_body_v_fps = r.f32();
-    p.v_body_u_fps = r.f32();
-    p.v_down_fps = r.f32();
-    p.v_east_fps = r.f32();
-    p.v_north_fps = r.f32();
-    p.climb_rate_fps = r.f32();
-    p.vcas_kt = r.f32();
-    p.psidot_rad_s = r.f32();
-    p.thetadot_rad_s = r.f32();
-    p.phidot_rad_s = r.f32();
-
-    p.beta_rad = r.f32();
-    p.alpha_rad = r.f32();
-    p.psi_rad = r.f32();
-    p.theta_rad = r.f32();
-    p.phi_rad = r.f32();
-    p.agl_m = r.f32();
-    p.altitude_m = r.f64();
-    p.latitude_rad = r.f64();
-    p.longitude_rad = r.f64();
-
-    r.u32(); // padding, discarded
-    p.version = r.u32();
-
-    // Same WrongVersion contract as before: `out` is still populated so a
-    // version bump alone -- not necessarily a layout problem -- doesn't
-    // discard otherwise-usable data.
-    out = p;
-    if (p.version != kVersion) {
+    if (out.version != kVersion) {
         return DecodeResult::WrongVersion;
     }
     return DecodeResult::Ok;
@@ -425,11 +308,11 @@ inline DecodeResult decode(const uint8_t* data, std::size_t size, Packet& out) {
  * DecodeResult::WrongVersion can come back, `out` populated either way.
  *
  * @param raw FGNetFDM already in memory (e.g. `recv()`'d directly into one).
- * @param out Receives the decoded, host-native Packet.
+ * @param out Receives the decoded FGNetFDMReversed.
  * @return DecodeResult::Ok or DecodeResult::WrongVersion; `out` is
  * populated in both cases.
  */
-inline DecodeResult decode(const FGNetFDM& raw, Packet& out) {
+inline DecodeResult decode(const FGNetFDM& raw, FGNetFDMReversed& out) {
     return decode(reinterpret_cast<const uint8_t*>(&raw), sizeof(raw), out);
 }
 

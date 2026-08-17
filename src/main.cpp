@@ -121,7 +121,7 @@ int main(int argc, char** argv) {
     double lastPacketTime = -1.0;
     double controlTimestamp = -1.0;
 
-    net_fdm::Packet packet;
+    net_fdm::FGNetFDMReversed packet;
     bool haveLink = false;
 
     bool haveWarnedVersion = false; // only warn on the first mismatch, and
@@ -155,7 +155,7 @@ int main(int argc, char** argv) {
                 int n = telemetry.recvInto(&buf.pkt, sizeof(buf));
                 if (n <= 0) break;
 
-                net_fdm::Packet p;
+                net_fdm::FGNetFDMReversed p;
                 net_fdm::DecodeResult r = net_fdm::decode(
                     reinterpret_cast<const uint8_t*>(&buf.pkt), static_cast<std::size_t>(n), p);
 
@@ -196,13 +196,13 @@ int main(int argc, char** argv) {
             line << "t=" << std::setw(6) << std::setprecision(1) << t;
 
             if (haveLink) {
-                double altFt = packet.altitude_m * 3.280839895;
-                double vsFpm = packet.climb_rate_fps * 60.0;
+                double altFt = packet.altitude * 3.280839895;
+                double vsFpm = packet.climb_rate * 60.0;
                 line << "  alt=" << std::setw(6) << std::setprecision(0) << altFt << "ft"
-                     << "  ias=" << std::setw(5) << std::setprecision(0) << packet.vcas_kt << "kt"
-                     << "  pitch=" << std::showpos << std::setprecision(1) << radToDeg(packet.theta_rad) << std::noshowpos
-                     << "  roll=" << std::showpos << std::setprecision(1) << radToDeg(packet.phi_rad) << std::noshowpos
-                     << "  hdg=" << std::setprecision(1) << radToDeg(packet.psi_rad)
+                     << "  ias=" << std::setw(5) << std::setprecision(0) << packet.vcas << "kt"
+                     << "  pitch=" << std::showpos << std::setprecision(1) << radToDeg(packet.theta) << std::noshowpos
+                     << "  roll=" << std::showpos << std::setprecision(1) << radToDeg(packet.phi) << std::noshowpos
+                     << "  hdg=" << std::setprecision(1) << radToDeg(packet.psi)
                      << "  vs=" << std::showpos << std::setprecision(0) << vsFpm << "fpm" << std::noshowpos
                      << "  elev=" << std::showpos << std::setprecision(3) << c.elevator << std::noshowpos
                      << "  ail=" << std::showpos << std::setprecision(3) << c.aileron << std::noshowpos;

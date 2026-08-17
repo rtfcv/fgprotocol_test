@@ -6,6 +6,15 @@
  * (CLAUDE.md: write tests before implementing); decode() is now
  * header-only itself, folded into net_fdm.h directly.
  *
+ * decode() itself is a whole-buffer-reversal decode -- measurably slower
+ * than the straightforward per-field byte-swap it replaced, kept anyway
+ * (see net_fdm.h's file comment for the full rationale). This file keeps
+ * TWO independent reference decoders to cross-check it against:
+ * BigEndianReader (the original byte-cursor decoder) and
+ * fieldByFieldDecode() (yesterday's production decode(), using
+ * ntoh32()/ntohf()/ntohd(), demoted to an oracle when whole-buffer-reversal
+ * took over the live path). Neither is part of the public library.
+ *
  * No JSBSim and no network needed -- everything here is a synthetic,
  * hand-built buffer standing in for a real UDP datagram.
  */
@@ -24,19 +33,20 @@ namespace {
  *
  * RETAINED AS REFERENCE, TEST-ONLY -- NOT PART OF THE LIBRARY.
  *
- * net_fdm::decode() (include/fgprotocol/net_fdm.h) reads FlightGear's wire
- * format by `memcpy`'ing straight into the packed FGNetFDM struct and
- * byte-swapping each field with ntoh32()/ntohf()/ntohd(). BigEndianReader
- * here is the earlier, padding-and-alignment-agnostic implementation of
- * the same decode: a sequential byte-cursor that never lays a struct over
- * the wire bytes at all, so it can't be broken by a packing/alignment
- * mistake in FGNetFDM. It's deliberately kept out of the public library
- * header -- nothing a library consumer needs, purely a cross-check this
- * repo's own tests use to keep the "real" decoder honest -- so it lives
- * here instead, with internal linkage (this anonymous namespace), used
- * only by the oracle check further down in main(). A future change to
- * net_fdm.h's field list still has to keep both in sync, or that check
- * fails -- unlike a plain unused class, this one won't rot silently.
+ * net_fdm::decode() (include/fgprotocol/net_fdm.h) is a whole-buffer-
+ * reversal decode (see its file comment). BigEndianReader here predates
+ * that -- and predates the field-by-field ntoh32()/ntohf()/ntohd() version
+ * that came between the two (see fieldByFieldDecode() below) -- and is the
+ * original, padding-and-alignment-agnostic implementation: a sequential
+ * byte-cursor that never lays a struct over the wire bytes at all, so it
+ * can't be broken by a packing/alignment mistake in FGNetFDM. It's
+ * deliberately kept out of the public library header -- nothing a library
+ * consumer needs, purely a cross-check this repo's own tests use to keep
+ * the live decoder honest -- so it lives here instead, with internal
+ * linkage (this anonymous namespace), used only by the oracle checks
+ * further down in main(). A future change to net_fdm.h's field list still
+ * has to keep all three decoders in sync, or those checks fail -- unlike a
+ * plain unused class, this one won't rot silently.
  *
  * Each call reads at the current position and advances -- offsets are
  * never computed by hand, so the field list here and in net_fdm.h staying
@@ -222,6 +232,170 @@ net_fdm::DecodeResult decodeWithBigEndianReader(const uint8_t* data, std::size_t
     return net_fdm::DecodeResult::Ok;
 }
 
+/**
+ * @brief Byte-swaps a 32-bit big-endian value into host order.
+ *
+ * RETAINED AS REFERENCE, TEST-ONLY -- NOT PART OF THE LIBRARY. Was
+ * `net_fdm::ntoh32()` before whole-buffer-reversal replaced the live
+ * decode(); used only by fieldByFieldDecode() below now.
+ *
+ * @param v Big-endian 32-bit value.
+ * @return `v` in host byte order.
+ */
+uint32_t ntoh32(uint32_t v) {
+    return ((v & 0x000000FFu) << 24) | ((v & 0x0000FF00u) << 8) |
+           ((v & 0x00FF0000u) >> 8) | ((v & 0xFF000000u) >> 24);
+}
+
+/**
+ * @brief Byte-swaps an FGNetFDM `float` field into a host-native value.
+ *
+ * RETAINED AS REFERENCE, TEST-ONLY. Takes the field's own type rather
+ * than `uint32_t` for the same reason the original had to: passing
+ * `raw.agl` (a `float`) to a `uint32_t` parameter would implicitly
+ * *numerically* convert its already-nonsense value instead of
+ * reinterpreting its bits -- this is the exact bug that was caught by
+ * this file's happy-path checks before this repo's decoder had a
+ * whole-buffer-reversal era at all.
+ *
+ * @param v An FGNetFDM float field, as read from wire bytes.
+ * @return The field's value in host byte order.
+ */
+float ntohf(float v) {
+    uint32_t bits;
+    std::memcpy(&bits, &v, sizeof(bits));
+    bits = ntoh32(bits);
+    float f;
+    std::memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
+/**
+ * @brief Byte-swaps an FGNetFDM `double` field into a host-native value.
+ * RETAINED AS REFERENCE, TEST-ONLY.
+ * @param v An FGNetFDM double field, as read from wire bytes.
+ * @return The field's value in host byte order.
+ */
+double ntohd(double v) {
+    uint64_t bits;
+    std::memcpy(&bits, &v, sizeof(bits));
+    uint64_t hostBits =
+        (static_cast<uint64_t>(ntoh32(static_cast<uint32_t>(bits & 0xFFFFFFFFull))) << 32) |
+        ntoh32(static_cast<uint32_t>(bits >> 32));
+    double d;
+    std::memcpy(&d, &hostBits, sizeof(d));
+    return d;
+}
+
+/**
+ * @brief Test-only oracle: today's `net_fdm::decode()`, before whole-buffer-reversal replaced it.
+ *
+ * RETAINED AS REFERENCE, TEST-ONLY -- NOT PART OF THE LIBRARY. This is
+ * exactly the body `net_fdm::decode(const uint8_t*, size_t, Packet&)` had
+ * before it became a whole-buffer-reversal decode: `memcpy` into a local
+ * FGNetFDM, then byte-swap each field individually via ntoh32()/ntohf()/
+ * ntohd() above. It's faster and keeps compile-time field-type checking
+ * that the live decoder gave up (see net_fdm.h's file comment) -- kept
+ * here as the second of two independent oracles decode() is cross-checked
+ * against, not because it's expected to ever disagree with
+ * BigEndianReader, but because two independently-implemented decoders
+ * agreeing is a much stronger signal than one.
+ *
+ * Mirrors decode()'s WrongSize/WrongVersion/Ok contract exactly (WrongSize
+ * zeroes `out`, WrongVersion still populates it).
+ *
+ * @param data Pointer to `size` bytes of raw datagram.
+ * @param size Byte count of `data`.
+ * @param out Receives the decoded Packet.
+ * @return net_fdm::DecodeResult::Ok, WrongSize, or WrongVersion.
+ */
+net_fdm::DecodeResult fieldByFieldDecode(const uint8_t* data, std::size_t size, net_fdm::Packet& out) {
+    out = net_fdm::Packet{};
+
+    if (size != net_fdm::kPacketSize) {
+        return net_fdm::DecodeResult::WrongSize;
+    }
+
+    net_fdm::FGNetFDM raw;
+    std::memcpy(&raw, data, sizeof(raw));
+
+    net_fdm::Packet p;
+
+    p.version = ntoh32(raw.version);
+    // raw.padding is part of the wire layout only, never decoded.
+
+    p.longitude_rad = ntohd(raw.longitude);
+    p.latitude_rad = ntohd(raw.latitude);
+    p.altitude_m = ntohd(raw.altitude);
+    p.agl_m = ntohf(raw.agl);
+    p.phi_rad = ntohf(raw.phi);
+    p.theta_rad = ntohf(raw.theta);
+    p.psi_rad = ntohf(raw.psi);
+    p.alpha_rad = ntohf(raw.alpha);
+    p.beta_rad = ntohf(raw.beta);
+
+    p.phidot_rad_s = ntohf(raw.phidot);
+    p.thetadot_rad_s = ntohf(raw.thetadot);
+    p.psidot_rad_s = ntohf(raw.psidot);
+    p.vcas_kt = ntohf(raw.vcas);
+    p.climb_rate_fps = ntohf(raw.climb_rate);
+    p.v_north_fps = ntohf(raw.v_north);
+    p.v_east_fps = ntohf(raw.v_east);
+    p.v_down_fps = ntohf(raw.v_down);
+    p.v_body_u_fps = ntohf(raw.v_body_u);
+    p.v_body_v_fps = ntohf(raw.v_body_v);
+    p.v_body_w_fps = ntohf(raw.v_body_w);
+
+    p.a_x_pilot_fps2 = ntohf(raw.A_X_pilot);
+    p.a_y_pilot_fps2 = ntohf(raw.A_Y_pilot);
+    p.a_z_pilot_fps2 = ntohf(raw.A_Z_pilot);
+
+    p.stall_warning = ntohf(raw.stall_warning);
+    p.slip_deg = ntohf(raw.slip_deg);
+
+    p.num_engines = ntoh32(raw.num_engines);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.eng_state[i] = ntoh32(raw.eng_state[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.rpm[i] = ntohf(raw.rpm[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.fuel_flow_gph[i] = ntohf(raw.fuel_flow[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.fuel_px_psi[i] = ntohf(raw.fuel_px[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.egt_degf[i] = ntohf(raw.egt[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.cht_degf[i] = ntohf(raw.cht[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.mp_inhg[i] = ntohf(raw.mp_osi[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.tit[i] = ntohf(raw.tit[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.oil_temp_degf[i] = ntohf(raw.oil_temp[i]);
+    for (int i = 0; i < net_fdm::kMaxEngines; ++i) p.oil_px_psi[i] = ntohf(raw.oil_px[i]);
+
+    p.num_tanks = ntoh32(raw.num_tanks);
+    for (int i = 0; i < net_fdm::kMaxTanks; ++i) p.fuel_quantity_lbs[i] = ntohf(raw.fuel_quantity[i]);
+
+    p.num_wheels = ntoh32(raw.num_wheels);
+    for (int i = 0; i < net_fdm::kMaxWheels; ++i) p.wow[i] = ntoh32(raw.wow[i]);
+    for (int i = 0; i < net_fdm::kMaxWheels; ++i) p.gear_pos_norm[i] = ntohf(raw.gear_pos[i]);
+    for (int i = 0; i < net_fdm::kMaxWheels; ++i) p.gear_steer_deg[i] = ntohf(raw.gear_steer[i]);
+    for (int i = 0; i < net_fdm::kMaxWheels; ++i) p.gear_compression_norm[i] = ntohf(raw.gear_compression[i]);
+
+    p.cur_time = ntoh32(raw.cur_time);
+    p.warp = static_cast<int32_t>(ntoh32(static_cast<uint32_t>(raw.warp)));
+    p.visibility_m = ntohf(raw.visibility);
+
+    p.elevator_norm = ntohf(raw.elevator);
+    p.elevator_trim_norm = ntohf(raw.elevator_trim_tab);
+    p.left_flap_norm = ntohf(raw.left_flap);
+    p.right_flap_norm = ntohf(raw.right_flap);
+    p.left_aileron_norm = ntohf(raw.left_aileron);
+    p.right_aileron_norm = ntohf(raw.right_aileron);
+    p.rudder_norm = ntohf(raw.rudder);
+    p.nose_wheel_norm = ntohf(raw.nose_wheel);
+    p.speedbrake_norm = ntohf(raw.speedbrake);
+    p.spoilers_norm = ntohf(raw.spoilers);
+
+    out = p;
+    if (p.version != net_fdm::kVersion) {
+        return net_fdm::DecodeResult::WrongVersion;
+    }
+    return net_fdm::DecodeResult::Ok;
+}
+
 /// Appends `v` to `buf` as 4 big-endian bytes.
 void putU32(std::vector<uint8_t>& buf, uint32_t v) {
     buf.push_back(static_cast<uint8_t>(v >> 24));
@@ -339,13 +513,14 @@ std::vector<uint8_t> buildValidPacket() {
 /**
  * @brief Asserts every field of `a` and `b` matches.
  *
- * Used to cross-check the live decode() (memcpy into packed FGNetFDM +
- * ntoh*) against decodeWithBigEndianReader() (the retained byte-cursor
- * decoder) on the same input -- both are pure functions of the same
- * bytes, so they should come back bit-for-bit identical, not just close.
- * buildValidPacket() gives every field a distinct value specifically so
- * a field landing in the wrong member here would be caught, not masked
- * by two fields sharing a value.
+ * Used to cross-check the live decode() (whole-buffer-reversal) against
+ * this file's two independent reference decoders --
+ * decodeWithBigEndianReader() and fieldByFieldDecode() -- on the same
+ * input. All three are pure functions of the same bytes, so they should
+ * come back bit-for-bit identical, not just close. buildValidPacket()
+ * gives every field a distinct value specifically so a field landing in
+ * the wrong member here would be caught, not masked by two fields sharing
+ * a value.
  *
  * @param a First packet to compare.
  * @param b Second packet to compare.
@@ -529,41 +704,58 @@ int main() {
         CHECK_EQ(out.num_wheels, static_cast<uint32_t>(3));
     }
 
-    // Oracle check: decodeWithBigEndianReader() must agree with decode()
-    // field-for-field on every DecodeResult, not just Ok. This is the only
-    // thing that keeps the retained BigEndianReader class honest -- nothing
-    // else in this file (or main.cpp) ever calls it, so without this test a
-    // future edit to net_fdm.h's field list could update decode() and leave
-    // BigEndianReader silently stale.
+    // Oracle check: both decodeWithBigEndianReader() and
+    // fieldByFieldDecode() must agree with decode() field-for-field on
+    // every DecodeResult, not just Ok. This is the only thing that keeps
+    // both retained reference decoders honest -- nothing else in this file
+    // (or main.cpp) ever calls either, so without this test a future edit
+    // to net_fdm.h's field list could update decode() and leave them
+    // silently stale. Two independent oracles agreeing with decode() is a
+    // stronger signal than one, especially since decode() itself now
+    // relies on hand-computed reverse field/array-index order -- exactly
+    // the class of mistake an independent, differently-structured decoder
+    // is positioned to catch.
     {
         net_fdm::Packet viaDecode;
-        net_fdm::Packet viaReader;
+        net_fdm::Packet viaBigEndianReader;
+        net_fdm::Packet viaFieldByField;
         CHECK(net_fdm::decode(valid.data(), valid.size(), viaDecode) ==
               net_fdm::DecodeResult::Ok);
-        CHECK(decodeWithBigEndianReader(valid.data(), valid.size(), viaReader) ==
+        CHECK(decodeWithBigEndianReader(valid.data(), valid.size(), viaBigEndianReader) ==
               net_fdm::DecodeResult::Ok);
-        checkPacketsMatch(viaDecode, viaReader);
+        CHECK(fieldByFieldDecode(valid.data(), valid.size(), viaFieldByField) ==
+              net_fdm::DecodeResult::Ok);
+        checkPacketsMatch(viaDecode, viaBigEndianReader);
+        checkPacketsMatch(viaDecode, viaFieldByField);
     }
     {
         std::vector<uint8_t> badVersion = valid;
         badVersion[3] = 7; // version 7, not 24 -- see the WrongVersion case above
         net_fdm::Packet viaDecode;
-        net_fdm::Packet viaReader;
+        net_fdm::Packet viaBigEndianReader;
+        net_fdm::Packet viaFieldByField;
         CHECK(net_fdm::decode(badVersion.data(), badVersion.size(), viaDecode) ==
               net_fdm::DecodeResult::WrongVersion);
-        CHECK(decodeWithBigEndianReader(badVersion.data(), badVersion.size(), viaReader) ==
+        CHECK(decodeWithBigEndianReader(badVersion.data(), badVersion.size(), viaBigEndianReader) ==
               net_fdm::DecodeResult::WrongVersion);
-        checkPacketsMatch(viaDecode, viaReader);
+        CHECK(fieldByFieldDecode(badVersion.data(), badVersion.size(), viaFieldByField) ==
+              net_fdm::DecodeResult::WrongVersion);
+        checkPacketsMatch(viaDecode, viaBigEndianReader);
+        checkPacketsMatch(viaDecode, viaFieldByField);
     }
     {
         std::vector<uint8_t> tooShort(valid.begin(), valid.end() - 1);
         net_fdm::Packet viaDecode;
-        net_fdm::Packet viaReader;
+        net_fdm::Packet viaBigEndianReader;
+        net_fdm::Packet viaFieldByField;
         CHECK(net_fdm::decode(tooShort.data(), tooShort.size(), viaDecode) ==
               net_fdm::DecodeResult::WrongSize);
-        CHECK(decodeWithBigEndianReader(tooShort.data(), tooShort.size(), viaReader) ==
+        CHECK(decodeWithBigEndianReader(tooShort.data(), tooShort.size(), viaBigEndianReader) ==
               net_fdm::DecodeResult::WrongSize);
-        checkPacketsMatch(viaDecode, viaReader); // both zeroed
+        CHECK(fieldByFieldDecode(tooShort.data(), tooShort.size(), viaFieldByField) ==
+              net_fdm::DecodeResult::WrongSize);
+        checkPacketsMatch(viaDecode, viaBigEndianReader); // both zeroed
+        checkPacketsMatch(viaDecode, viaFieldByField);     // both zeroed
     }
 
     // A failed decode must leave `out` all-zero, not partially filled --

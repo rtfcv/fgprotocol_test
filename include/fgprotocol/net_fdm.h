@@ -17,6 +17,20 @@
  * timing, or what a caller wants to do with a decoded Packet -- see the
  * jsbsim_tester project's own `src/` for that (`udp_socket.h`/`.cpp`,
  * `main.cpp`).
+ *
+ * @note decode() is deliberately implemented as a whole-buffer reversal
+ * (see its own comment) rather than the more obvious per-field byte-swap.
+ * Measured (-O2, this repo's own toolchain): the whole-buffer-reversal
+ * decode is consistently ~55-70% *slower* than a straightforward per-field
+ * `ntoh32()`/`ntohf()`/`ntohd()` version, which GCC already compiles down
+ * to a single `bswap` instruction per field -- there was no naive
+ * byte-shuffling to beat. The faster, type-checked, per-field version is
+ * retained as a cross-checked test oracle in `tests/test_net_fdm.cpp`
+ * (`fieldByFieldDecode()`), not deleted. This tradeoff -- shorter,
+ * mathematically interesting code that is measurably worse on every axis
+ * (speed, compile-time type safety, and how error-prone the hand-computed
+ * reverse field/array-index order is to get right) -- was a deliberate,
+ * explicit choice, not an oversight.
  */
 #ifndef FGPROTOCOL_NET_FDM_H
 #define FGPROTOCOL_NET_FDM_H
@@ -55,8 +69,8 @@ constexpr int kMaxTanks = 4;   ///< Number of fuel tank slots in FGNetFDM.
  * layout mismatch" instead of the program silently decoding garbage at
  * runtime.
  *
- * @note All multi-byte fields are big-endian on the wire; use ntoh32(),
- * ntohf(), ntohd() (or decode()) to get host-native values.
+ * @note All multi-byte fields are big-endian on the wire; use decode() to
+ * get host-native values.
  */
 #pragma pack(push, 1)
 struct FGNetFDM {
@@ -142,65 +156,56 @@ static_assert(sizeof(FGNetFDM) == kPacketSize, "FGNetFDM layout mismatch");
 static_assert(sizeof(float) == 4, "float must be 32 bits for the FGNetFDM decode");
 static_assert(sizeof(double) == 8, "double must be 64 bits for the FGNetFDM decode");
 
-/**
- * @brief Byte-swaps a 32-bit big-endian value into host order.
- *
- * Hand-written -- deliberately not ntohl() from `<winsock2.h>`/
- * `<arpa/inet.h>`: pulling either header into this file would force every
- * consumer (including a build with no sockets at all -- the whole point of
- * this being a standalone header) to link against a platform's socket
- * library just to decode a struct.
- *
- * @param v Big-endian 32-bit value.
- * @return `v` in host byte order.
- */
-inline uint32_t ntoh32(uint32_t v) {
-    return ((v & 0x000000FFu) << 24) | ((v & 0x0000FF00u) << 8) |
-           ((v & 0x00FF0000u) >> 8) | ((v & 0xFF000000u) >> 24);
-}
+namespace detail {
 
 /**
- * @brief Byte-swaps an FGNetFDM `float` field into a host-native value.
+ * @brief Sequential reader over an already whole-buffer-reversed datagram.
  *
- * Takes the FGNetFDM field itself (a `float` already holding the raw
- * big-endian bit pattern, reinterpreted -- meaninglessly, as far as its
- * numeric value goes -- as a native float by simply being a struct member).
- * Deliberately NOT a `uint32_t` parameter: passing `raw.agl` (a `float`) to
- * a `uint32_t` parameter would implicitly *numerically* convert the
- * float's already-nonsense value to an integer -- rounding toward zero,
- * saturating, or invoking UB on an out-of-range/NaN value -- instead of
- * reinterpreting its bits, silently corrupting every field. `memcpy` is
- * what actually gets at the bits.
- *
- * @param v An FGNetFDM float field, as read from wire bytes.
- * @return The field's value in host byte order.
+ * See decode()'s comment for the derivation: reversing a concatenation of
+ * fields reverses each field's own bytes *and* flips the order the fields
+ * appear in -- `reverse(A+B+...+Z) == reverse(Z)+...+reverse(B)+reverse(A)`
+ * -- so reading the reversed buffer back in reverse declaration order
+ * (array elements included, since arrays are just nested concatenations)
+ * recovers every field already in host-native byte order. No per-field
+ * byte-swap call is needed here; the whole-buffer reversal already did it.
+ * Internal to this header -- not part of the public API.
  */
-inline float ntohf(float v) {
-    uint32_t bits;
-    std::memcpy(&bits, &v, sizeof(bits));
-    bits = ntoh32(bits);
-    float f;
-    std::memcpy(&f, &bits, sizeof(f));
-    return f;
-}
+class ReverseCursor {
+public:
+    /// @param p Pointer into an already-reversed buffer; advances with each read.
+    explicit ReverseCursor(const uint8_t* p) : p_(p) {}
 
-/**
- * @brief Byte-swaps an FGNetFDM `double` field into a host-native value.
- * @param v An FGNetFDM double field, as read from wire bytes.
- * @return The field's value in host byte order.
- * @see ntohf() for why this takes the field's own type rather than a raw
- * integer type.
- */
-inline double ntohd(double v) {
-    uint64_t bits;
-    std::memcpy(&bits, &v, sizeof(bits));
-    uint64_t hostBits =
-        (static_cast<uint64_t>(ntoh32(static_cast<uint32_t>(bits & 0xFFFFFFFFull))) << 32) |
-        ntoh32(static_cast<uint32_t>(bits >> 32));
-    double d;
-    std::memcpy(&d, &hostBits, sizeof(d));
-    return d;
-}
+    /// @return The next 4 bytes, reinterpreted as a host-native `uint32_t`.
+    uint32_t u32() { uint32_t v; std::memcpy(&v, p_, 4); p_ += 4; return v; }
+    /// @return The next 4 bytes, reinterpreted as a host-native `int32_t`.
+    int32_t i32() { int32_t v; std::memcpy(&v, p_, 4); p_ += 4; return v; }
+    /// @return The next 4 bytes, reinterpreted as a host-native `float`.
+    float f32() { float v; std::memcpy(&v, p_, 4); p_ += 4; return v; }
+    /// @return The next 8 bytes, reinterpreted as a host-native `double`.
+    double f64() { double v; std::memcpy(&v, p_, 8); p_ += 8; return v; }
+
+    /**
+     * @brief Reads `N` consecutive `u32()` values into `arr`, index N-1 down to 0.
+     *
+     * Array elements are reversed by the whole-buffer flip along with
+     * everything else, so the first chunk read here is the *last*
+     * element's correctly-ordered bytes.
+     */
+    template <std::size_t N>
+    void u32arr(std::array<uint32_t, N>& arr) {
+        for (std::size_t i = 0; i < N; ++i) arr[N - 1 - i] = u32();
+    }
+    /// @brief Reads `N` consecutive `f32()` values into `arr`, index N-1 down to 0.
+    template <std::size_t N>
+    void f32arr(std::array<float, N>& arr) {
+        for (std::size_t i = 0; i < N; ++i) arr[N - 1 - i] = f32();
+    }
+
+private:
+    const uint8_t* p_;
+};
+
+} // namespace detail
 
 /**
  * @brief The decoded, host-native, unit-labeled form callers actually want to work with.
@@ -286,115 +291,27 @@ enum class DecodeResult {
 };
 
 /**
- * @brief Decodes an already-received FGNetFDM into `out`.
- *
- * On version mismatch, `out` is still populated from `raw` and
- * DecodeResult::WrongVersion is returned -- callers are expected to warn
- * and use the data anyway, since a version bump alone doesn't make the
- * bytes garbage. Only a size problem (impossible to hit through this
- * overload, since FGNetFDM is fixed-size, but relevant to the
- * buffer-taking overload below) zeroes `out`.
- *
- * @param raw FGNetFDM already in memory (e.g. `recv()`'d directly into one).
- * @param out Receives the decoded, host-native Packet.
- * @return DecodeResult::Ok or DecodeResult::WrongVersion; `out` is
- * populated in both cases.
- */
-inline DecodeResult decode(const FGNetFDM& raw, Packet& out) {
-    Packet p;
-
-    p.version = ntoh32(raw.version);
-    // raw.padding is part of the wire layout only, never decoded.
-
-    p.longitude_rad = ntohd(raw.longitude);
-    p.latitude_rad = ntohd(raw.latitude);
-    p.altitude_m = ntohd(raw.altitude);
-    p.agl_m = ntohf(raw.agl);
-    p.phi_rad = ntohf(raw.phi);
-    p.theta_rad = ntohf(raw.theta);
-    p.psi_rad = ntohf(raw.psi);
-    p.alpha_rad = ntohf(raw.alpha);
-    p.beta_rad = ntohf(raw.beta);
-
-    p.phidot_rad_s = ntohf(raw.phidot);
-    p.thetadot_rad_s = ntohf(raw.thetadot);
-    p.psidot_rad_s = ntohf(raw.psidot);
-    p.vcas_kt = ntohf(raw.vcas);
-    p.climb_rate_fps = ntohf(raw.climb_rate);
-    p.v_north_fps = ntohf(raw.v_north);
-    p.v_east_fps = ntohf(raw.v_east);
-    p.v_down_fps = ntohf(raw.v_down);
-    p.v_body_u_fps = ntohf(raw.v_body_u);
-    p.v_body_v_fps = ntohf(raw.v_body_v);
-    p.v_body_w_fps = ntohf(raw.v_body_w);
-
-    p.a_x_pilot_fps2 = ntohf(raw.A_X_pilot);
-    p.a_y_pilot_fps2 = ntohf(raw.A_Y_pilot);
-    p.a_z_pilot_fps2 = ntohf(raw.A_Z_pilot);
-
-    p.stall_warning = ntohf(raw.stall_warning);
-    p.slip_deg = ntohf(raw.slip_deg);
-
-    p.num_engines = ntoh32(raw.num_engines);
-    for (int i = 0; i < kMaxEngines; ++i) p.eng_state[i] = ntoh32(raw.eng_state[i]);
-    for (int i = 0; i < kMaxEngines; ++i) p.rpm[i] = ntohf(raw.rpm[i]);
-    for (int i = 0; i < kMaxEngines; ++i) p.fuel_flow_gph[i] = ntohf(raw.fuel_flow[i]);
-    for (int i = 0; i < kMaxEngines; ++i) p.fuel_px_psi[i] = ntohf(raw.fuel_px[i]);
-    for (int i = 0; i < kMaxEngines; ++i) p.egt_degf[i] = ntohf(raw.egt[i]);
-    for (int i = 0; i < kMaxEngines; ++i) p.cht_degf[i] = ntohf(raw.cht[i]);
-    for (int i = 0; i < kMaxEngines; ++i) p.mp_inhg[i] = ntohf(raw.mp_osi[i]);
-    for (int i = 0; i < kMaxEngines; ++i) p.tit[i] = ntohf(raw.tit[i]);
-    for (int i = 0; i < kMaxEngines; ++i) p.oil_temp_degf[i] = ntohf(raw.oil_temp[i]);
-    for (int i = 0; i < kMaxEngines; ++i) p.oil_px_psi[i] = ntohf(raw.oil_px[i]);
-
-    p.num_tanks = ntoh32(raw.num_tanks);
-    for (int i = 0; i < kMaxTanks; ++i) p.fuel_quantity_lbs[i] = ntohf(raw.fuel_quantity[i]);
-
-    p.num_wheels = ntoh32(raw.num_wheels);
-    for (int i = 0; i < kMaxWheels; ++i) p.wow[i] = ntoh32(raw.wow[i]);
-    for (int i = 0; i < kMaxWheels; ++i) p.gear_pos_norm[i] = ntohf(raw.gear_pos[i]);
-    for (int i = 0; i < kMaxWheels; ++i) p.gear_steer_deg[i] = ntohf(raw.gear_steer[i]);
-    for (int i = 0; i < kMaxWheels; ++i) p.gear_compression_norm[i] = ntohf(raw.gear_compression[i]);
-
-    p.cur_time = ntoh32(raw.cur_time);
-    p.warp = static_cast<int32_t>(ntoh32(static_cast<uint32_t>(raw.warp)));
-    p.visibility_m = ntohf(raw.visibility);
-
-    p.elevator_norm = ntohf(raw.elevator);
-    p.elevator_trim_norm = ntohf(raw.elevator_trim_tab);
-    p.left_flap_norm = ntohf(raw.left_flap);
-    p.right_flap_norm = ntohf(raw.right_flap);
-    p.left_aileron_norm = ntohf(raw.left_aileron);
-    p.right_aileron_norm = ntohf(raw.right_aileron);
-    p.rudder_norm = ntohf(raw.rudder);
-    p.nose_wheel_norm = ntohf(raw.nose_wheel);
-    p.speedbrake_norm = ntohf(raw.speedbrake);
-    p.spoilers_norm = ntohf(raw.spoilers);
-
-    // Unlike WrongSize (handled by the buffer-taking overload below), a
-    // version mismatch here does NOT mean `raw`'s layout was wrong -- only
-    // that the sender is a different protocol revision. `out` is populated
-    // either way; the caller decides whether to warn and use it.
-    out = p;
-    if (p.version != kVersion) {
-        return DecodeResult::WrongVersion;
-    }
-    return DecodeResult::Ok;
-}
-
-/**
  * @brief Decodes a raw big-endian FGNetFDM datagram into `out`.
  *
- * Validates the size, then `memcpy`'s into a local FGNetFDM (the incoming
- * pointer has no alignment guarantee, so this can't just
- * `reinterpret_cast` it) and delegates to the struct-taking overload
- * above.
+ * Whole-buffer-reversal decode: reverses all `kPacketSize` bytes once,
+ * then reads fields back through a detail::ReverseCursor in *reverse*
+ * FGNetFDM declaration order (array elements reversed too). This works
+ * for any mix of field widths because reversing a concatenation reverses
+ * each piece and flips the order of the pieces --
+ * `reverse(A+B+...+Z) == reverse(Z)+...+reverse(B)+reverse(A)` -- so
+ * walking the reversed buffer from the front, using each field's own
+ * width, recovers every field already correctly byte-order-native. See
+ * this file's top comment for why this is the live implementation despite
+ * being measurably slower than the straightforward per-field version
+ * (retained as `fieldByFieldDecode()` in `tests/test_net_fdm.cpp`).
  *
  * On DecodeResult::WrongSize, `out` is reset to a default-constructed
  * (all-zero) Packet rather than left partially filled -- callers must
  * check the DecodeResult, not just look at the data, to tell a real
- * zeroed-out flight state from "nothing decoded." DecodeResult::WrongVersion
- * is different: see the struct-taking overload above.
+ * zeroed-out flight state from "nothing decoded." On
+ * DecodeResult::WrongVersion, `out` is still populated -- a version bump
+ * alone doesn't mean the bytes are garbage, so callers are expected to
+ * warn and use the data anyway.
  *
  * @param data Pointer to `size` bytes of raw datagram.
  * @param size Byte count of `data`; must equal kPacketSize for anything
@@ -410,14 +327,110 @@ inline DecodeResult decode(const uint8_t* data, std::size_t size, Packet& out) {
         return DecodeResult::WrongSize;
     }
 
-    // memcpy, not reinterpret_cast: `data` is a caller-owned buffer with no
-    // alignment guarantee, and FGNetFDM is packed to alignment 1 anyway, so
-    // there is nothing safe to cast onto. sizeof(raw) == kPacketSize is
-    // enforced by the static_assert above, so this copies exactly `size`
-    // bytes.
-    FGNetFDM raw;
-    std::memcpy(&raw, data, sizeof(raw));
-    return decode(raw, out);
+    uint8_t rev[kPacketSize];
+    for (std::size_t i = 0; i < kPacketSize; ++i) {
+        rev[i] = data[kPacketSize - 1 - i];
+    }
+
+    detail::ReverseCursor r(rev);
+    Packet p;
+
+    // Reverse FGNetFDM declaration order: its LAST field first.
+    p.spoilers_norm = r.f32();
+    p.speedbrake_norm = r.f32();
+    p.nose_wheel_norm = r.f32();
+    p.rudder_norm = r.f32();
+    p.right_aileron_norm = r.f32();
+    p.left_aileron_norm = r.f32();
+    p.right_flap_norm = r.f32();
+    p.left_flap_norm = r.f32();
+    p.elevator_trim_norm = r.f32();
+    p.elevator_norm = r.f32();
+
+    p.visibility_m = r.f32();
+    p.warp = r.i32();
+    p.cur_time = r.u32();
+
+    r.f32arr(p.gear_compression_norm);
+    r.f32arr(p.gear_steer_deg);
+    r.f32arr(p.gear_pos_norm);
+    r.u32arr(p.wow);
+    p.num_wheels = r.u32();
+
+    r.f32arr(p.fuel_quantity_lbs);
+    p.num_tanks = r.u32();
+
+    r.f32arr(p.oil_px_psi);
+    r.f32arr(p.oil_temp_degf);
+    r.f32arr(p.tit);
+    r.f32arr(p.mp_inhg);
+    r.f32arr(p.cht_degf);
+    r.f32arr(p.egt_degf);
+    r.f32arr(p.fuel_px_psi);
+    r.f32arr(p.fuel_flow_gph);
+    r.f32arr(p.rpm);
+    r.u32arr(p.eng_state);
+    p.num_engines = r.u32();
+
+    p.slip_deg = r.f32();
+    p.stall_warning = r.f32();
+
+    p.a_z_pilot_fps2 = r.f32();
+    p.a_y_pilot_fps2 = r.f32();
+    p.a_x_pilot_fps2 = r.f32();
+
+    p.v_body_w_fps = r.f32();
+    p.v_body_v_fps = r.f32();
+    p.v_body_u_fps = r.f32();
+    p.v_down_fps = r.f32();
+    p.v_east_fps = r.f32();
+    p.v_north_fps = r.f32();
+    p.climb_rate_fps = r.f32();
+    p.vcas_kt = r.f32();
+    p.psidot_rad_s = r.f32();
+    p.thetadot_rad_s = r.f32();
+    p.phidot_rad_s = r.f32();
+
+    p.beta_rad = r.f32();
+    p.alpha_rad = r.f32();
+    p.psi_rad = r.f32();
+    p.theta_rad = r.f32();
+    p.phi_rad = r.f32();
+    p.agl_m = r.f32();
+    p.altitude_m = r.f64();
+    p.latitude_rad = r.f64();
+    p.longitude_rad = r.f64();
+
+    r.u32(); // padding, discarded
+    p.version = r.u32();
+
+    // Same WrongVersion contract as before: `out` is still populated so a
+    // version bump alone -- not necessarily a layout problem -- doesn't
+    // discard otherwise-usable data.
+    out = p;
+    if (p.version != kVersion) {
+        return DecodeResult::WrongVersion;
+    }
+    return DecodeResult::Ok;
+}
+
+/**
+ * @brief Decodes an already-received FGNetFDM into `out`.
+ *
+ * Thin wrapper over the buffer-taking overload above: `FGNetFDM` is
+ * packed to alignment 1 and always exactly `kPacketSize` bytes (enforced
+ * by the static_assert() near its definition), so reading its bytes
+ * through a `const uint8_t*` alias is safe and DecodeResult::WrongSize is
+ * unreachable through this overload -- only DecodeResult::Ok or
+ * DecodeResult::WrongVersion can come back, `out` populated either way.
+ *
+ * @param raw FGNetFDM already in memory (e.g. `recv()`'d directly into one).
+ * @param out Receives the decoded, host-native Packet.
+ * @return DecodeResult::Ok or DecodeResult::WrongVersion; `out` is
+ * populated in both cases.
+ */
+inline DecodeResult decode(const FGNetFDM& raw, Packet& out) {
+    return decode(reinterpret_cast<const uint8_t*>(&raw), sizeof(raw), out);
 }
 
 /**

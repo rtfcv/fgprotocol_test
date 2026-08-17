@@ -150,20 +150,28 @@ top of it:
   this repo (see "Using this library elsewhere" below).
   - **`net_fdm.h`**: FlightGear's real native-fdm binary protocol (`FGNetFDM`,
     protocol version 24, exactly 408 bytes, every field big-endian) -- not
-    JSBSim's ASCII CSV `<output type="SOCKET">`. `recv()` reads straight into
-    a `#pragma pack(1)` `FGNetFDM` struct matching that layout field-for-field,
-    and hand-written `ntohf()`/`ntohd()` byte-swap each field out of it
-    (deliberately not `<winsock2.h>`'s `ntohl`/`ntohs` -- pulling that header
-    in would force every consumer to link against a platform's socket
-    library just to decode a struct). A `static_assert(sizeof(FGNetFDM) ==
-    408)` is what actually earns trust in the layout: a field-list mistake
-    fails the *build*, not a live run. `decode()` is fully header-only
-    (`inline`) -- no separate `.cpp` to link. An earlier byte-cursor decoder
-    (`BigEndianReader`) took the padding-and-alignment-agnostic approach
-    instead, never laying a struct over the wire bytes at all; it's retained
-    as test-only reference material in `tests/test_net_fdm.cpp` (not part of
-    the library's public surface), cross-checked against `decode()` there so
-    it can't silently rot.
+    JSBSim's ASCII CSV `<output type="SOCKET">`. A `static_assert(sizeof(
+    FGNetFDM) == 408)` is what actually earns trust in the wire struct's
+    layout: a field-list mistake fails the *build*, not a live run.
+    `decode()` is fully header-only (`inline`) -- no separate `.cpp` to
+    link. Its algorithm is deliberately non-obvious: `decode()` reverses
+    the whole 408-byte datagram once, then reads fields back through a
+    `detail::ReverseCursor` in *reverse* declaration order (array elements
+    reversed too) -- no per-field byte-swap call needed, since reversing a
+    concatenation reverses each field's bytes *and* flips the order the
+    fields appear in (`reverse(A+B+...+Z) ==
+    reverse(Z)+...+reverse(B)+reverse(A)`), so walking the reversed buffer
+    front-to-back with each field's own width recovers every field already
+    host-native. This was chosen *despite* being measured ~55-70% slower
+    (`-O2`) than the straightforward per-field `ntoh32()`/`ntohf()`/
+    `ntohd()` version it replaced -- GCC already compiles that version's
+    bit-shifts down to a single `bswap` instruction per field, so there was
+    no naive byte-shuffling left to beat. The faster version is retained as
+    a test oracle (`fieldByFieldDecode()` in `tests/test_net_fdm.cpp`),
+    alongside an even earlier byte-cursor decoder (`BigEndianReader`, same
+    file) that predates both -- neither is part of the library's public
+    surface, and both are cross-checked against the live `decode()` on
+    every test run so neither can silently rot.
   - **`control_wire.h`**: JSBSim's `FGUDPInputSocket` wire format --
     `timestamp,v1,v2,...,vN\n` for an arbitrary ordered list of values, comma
     count must exactly match the declared `<property>` count, and the
@@ -304,9 +312,13 @@ not by guessing:
   exactly `0` instead of the test's `1.111` -- caught immediately by
   `tests/test_net_fdm.cpp`'s happy-path `CHECK_NEAR` values, not by the
   compiler. Fixed by making `ntohf`/`ntohd` take `float`/`double` directly
-  and `memcpy` the bits out internally (`include/fgprotocol/net_fdm.h`).
-  This is the exact case CLAUDE.md's "write tests before implementing" rule
-  exists for: the build looked fine start to finish.
+  and `memcpy` the bits out internally. This is the exact case CLAUDE.md's
+  "write tests before implementing" rule exists for: the build looked fine
+  start to finish. (This version of `ntohf`/`ntohd` no longer lives in
+  `net_fdm.h` -- a later whole-buffer-reversal rewrite of `decode()`
+  doesn't need per-field byte-swaps at all; they're retained as
+  `fieldByFieldDecode()`'s helpers in `tests/test_net_fdm.cpp` instead. The
+  bug and the fix described here are unaffected by where the code lives.)
 - **A `recv()` sized to exactly the expected payload silently hides an
   oversize datagram, and hides it differently per platform.** POSIX `recv()`
   truncates a too-large UDP datagram to the buffer size with no error;
@@ -318,18 +330,33 @@ not by guessing:
   silently decoded as if it were valid.
 - **A cross-check test is only as good as its ability to actually fail.**
   [`tests/test_net_fdm.cpp`](tests/test_net_fdm.cpp) decodes every test
-  packet two ways -- the live `decode()` (packed struct + `ntoh*`) and
-  `decodeWithBigEndianReader()` (the retained byte-cursor decoder, kept
-  around specifically as a second, independently-structured implementation
-  to check the first against) -- and asserts every field matches. That's
-  only meaningful if the test can actually distinguish the two, so this was
-  verified directly: deliberately corrupted `BigEndianReader::u32()` (added
-  1 to every decoded value), confirmed `ctest` failed on the mismatch, then
-  reverted. Worth remembering as a pattern generally: when a rewrite makes a
-  prior implementation redundant on the live path, retaining it as a test
-  oracle is often better than deleting it -- but only if something actually
-  exercises it, and confirming that takes deliberately breaking one side and
-  watching the test catch it, not just reading the assertions.
+  packet three ways -- the live `decode()`, `decodeWithBigEndianReader()`,
+  and `fieldByFieldDecode()` (two retained, independently-structured
+  reference decoders -- see "How the pieces fit together" above) -- and
+  asserts every field matches across all of them. That's only meaningful
+  if the test can actually distinguish them, so this was verified
+  directly: deliberately corrupted `BigEndianReader::u32()` (added 1 to
+  every decoded value), confirmed `ctest` failed on the mismatch, then
+  reverted. Worth remembering as a pattern generally: when a rewrite makes
+  a prior implementation redundant on the live path, retaining it as a
+  test oracle is often better than deleting it -- but only if something
+  actually exercises it, and confirming that takes deliberately breaking
+  one side and watching the test catch it, not just reading the
+  assertions.
+- **Shorter, more "clever" code is not automatically faster code.** A
+  whole-buffer-reversal decode looked like it should beat the
+  straightforward per-field version -- fewer function calls, one memory
+  pass to reverse instead of many small `ntoh*()` calls. Measured (`-O2`,
+  2,000,000 iterations, correctness verified first): it was consistently
+  ~55-70% *slower*, because it does two full passes over the buffer
+  (reverse it, then extract each field) where the per-field version does
+  one, and because GCC already compiles the per-field version's bit-shifts
+  into a single `bswap` instruction -- there was no naive byte-shuffling
+  left to optimize away. It's still the live decoder in this repo (a
+  deliberate choice, not a mistake -- see `net_fdm.h`'s file comment), but
+  the lesson generalizes: measure before assuming an algorithmically
+  "neater" version is faster, especially against code the compiler can
+  already turn into a single instruction.
 
 ## Future addition (not yet built)
 

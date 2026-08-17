@@ -10,13 +10,12 @@
 #include "net_fdm.h"
 
 #include <chrono>
-#include <cstring>
+#include <cstddef>
+#include <cstdint>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <thread>
-#include <vector>
 
 namespace {
 
@@ -27,6 +26,20 @@ constexpr int kControlPort = 5501;          // us -> JSBSim <input> (scripts/dem
 constexpr double kControlSendPeriod = 1.0 / 20.0; // Hz at which we send controls
 constexpr double kPrintPeriod = 1.0 / 5.0;        // Hz at which we print telemetry
 constexpr double kNoLinkTimeout = 1.0;            // seconds of silence before "NO LINK"
+constexpr int kSelectTimeoutMs = 5;               // how long each waitReadable() blocks
+
+// recv() target for one telemetry datagram, sized one byte past a real
+// FGNetFDM. A well-formed 408-byte datagram fills exactly `pkt`; anything
+// larger spills into `overflow`, so the size net_fdm::decode() sees (the
+// byte count recv() returns) comes back as 409+ and is rejected as
+// WrongSize instead of being silently truncated by the OS (POSIX) or
+// bounced with WSAEMSGSIZE (Windows) -- see README's "Gotchas" for why
+// this asymmetry matters enough to guard against explicitly.
+struct RecvBuffer {
+    net_fdm::FGNetFDM pkt;
+    uint8_t overflow;
+};
+static_assert(sizeof(RecvBuffer) == net_fdm::kPacketSize + 1, "unexpected padding in RecvBuffer");
 
 double nowSeconds() {
     static const auto start = std::chrono::steady_clock::now();
@@ -88,6 +101,12 @@ int main(int argc, char** argv) {
     net_fdm::Packet packet;
     bool haveLink = false;
 
+    bool haveWarnedVersion = false; // only warn on the first mismatch, and
+    uint32_t warnedVersion = 0;     // again if the mismatched version changes
+                                     // -- JSBSim emits at 30 Hz and an
+                                     // unconditional per-packet warning would
+                                     // bury the telemetry rows below it.
+
     for (;;) {
         double t = nowSeconds();
 
@@ -98,17 +117,46 @@ int main(int argc, char** argv) {
             controlOut.send(datagram);
         }
 
-        std::vector<uint8_t> buf;
-        while (telemetry.recvDatagram(buf)) {
-            net_fdm::Packet p;
-            net_fdm::DecodeResult r = net_fdm::decode(buf.data(), buf.size(), p);
-            if (r == net_fdm::DecodeResult::Ok) {
+        UdpSocket::Readable ready = telemetry.waitReadable(kSelectTimeoutMs);
+        if (ready == UdpSocket::Readable::Error) {
+            std::cerr << "[ERROR] select() failed\n";
+            return 1;
+        }
+
+        // Drain everything currently queued -- JSBSim's 30 Hz feed can
+        // outrun a single waitReadable() wakeup, and non-blocking recvInto()
+        // just returns <= 0 once the socket is empty.
+        if (ready == UdpSocket::Readable::Ready) {
+            for (;;) {
+                RecvBuffer buf;
+                int n = telemetry.recvInto(&buf.pkt, sizeof(buf));
+                if (n <= 0) break;
+
+                net_fdm::Packet p;
+                net_fdm::DecodeResult r = net_fdm::decode(
+                    reinterpret_cast<const uint8_t*>(&buf.pkt), static_cast<std::size_t>(n), p);
+
+                if (r == net_fdm::DecodeResult::WrongSize) {
+                    std::cerr << "telemetry decode failed: " << net_fdm::describe(r)
+                              << " (" << n << " bytes)\n";
+                    continue;
+                }
+
+                if (r == net_fdm::DecodeResult::WrongVersion &&
+                    (!haveWarnedVersion || warnedVersion != p.version)) {
+                    std::cerr << "[WARN] FDM version mismatch: got " << p.version
+                              << ", expected " << net_fdm::kVersion << "\n";
+                    haveWarnedVersion = true;
+                    warnedVersion = p.version;
+                }
+
+                // Ok and WrongVersion both leave `p` populated (net_fdm.h)
+                // -- a version mismatch alone doesn't make the fields
+                // garbage, so use the packet either way, just warned about
+                // above.
                 packet = p;
                 lastPacketTime = t;
                 haveLink = true;
-            } else {
-                std::cerr << "telemetry decode failed: " << net_fdm::describe(r)
-                          << " (" << buf.size() << " bytes)\n";
             }
         }
 
@@ -141,6 +189,8 @@ int main(int argc, char** argv) {
             std::cout << line.str() << "\n";
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        // No sleep here: waitReadable() above already blocked up to
+        // kSelectTimeoutMs whenever nothing was queued, so this loop only
+        // spins fast while telemetry is actively arriving.
     }
 }

@@ -128,16 +128,27 @@ its own FDM, so any aircraft model works.
 
 - **Telemetry** (`src/net_fdm.h`/`.cpp`): FlightGear's real native-fdm binary
   protocol (`FGNetFDM`, protocol version 24, exactly 408 bytes, every field
-  big-endian) -- not JSBSim's ASCII CSV `<output type="SOCKET">`. Decoding
-  goes through a byte-cursor reader that self-checks the total bytes
-  consumed, so a field-list mistake shows up as a caught size mismatch
-  instead of silently misreading every offset after it.
+  big-endian) -- not JSBSim's ASCII CSV `<output type="SOCKET">`. `recv()`
+  reads straight into a `#pragma pack(1)` `FGNetFDM` struct matching that
+  layout field-for-field, and hand-written `ntohf()`/`ntohd()` byte-swap each
+  field out of it (deliberately not `<winsock2.h>`'s `ntohl`/`ntohs` --
+  pulling that header into `net_fdm.h` would force the Winsock-free unit
+  tests to link against sockets). A `static_assert(sizeof(FGNetFDM) == 408)`
+  is what actually earns trust in the layout: a field-list mistake fails the
+  *build*, not a live run. An earlier byte-cursor decoder
+  (`BigEndianReader`, still in `src/net_fdm.cpp`, retained as reference but
+  uncalled) took the padding-and-alignment-agnostic approach instead, never
+  laying a struct over the wire bytes at all -- worth reaching for again if
+  the packed-struct path is ever hard to debug.
 - **Control** (`src/control.h`/`.cpp`): built for JSBSim's `FGUDPInputSocket`,
   which is strict -- `timestamp,v1,v2,v3\n`, comma count must exactly match
   the declared `<property>` count, and the timestamp must strictly increase
   or the whole packet is dropped silently, with no reply.
-- **Sockets** (`src/udp_socket.h`/`.cpp`): a thin non-blocking Winsock
-  wrapper plus a `WinsockGuard` for `WSAStartup`/`WSACleanup` lifetime.
+- **Sockets** (`src/udp_socket.h`/`.cpp`): non-blocking Winsock sockets, with
+  `waitReadable()` wrapping `select()` on a `timeval` so the main loop
+  blocks until either a telemetry datagram is queued or a short timeout
+  elapses, rather than polling on a fixed sleep. A `WinsockGuard` handles
+  `WSAStartup`/`WSACleanup` lifetime.
 - **Where the wire config lives**: deliberately *not* in the aircraft file.
   - [`aircraft/minimal/minimal.xml`](aircraft/minimal/minimal.xml) is pure
     flight dynamics -- no `<input>`/`<output>` at all.
@@ -211,6 +222,30 @@ not by guessing:
   run. If a rerun behaves like nothing is arriving over UDP, check
   `Get-Process jsbsim_tester, JSBSim` for stragglers before assuming a code
   bug.
+- **A byte-swap helper that takes the wrong parameter type compiles clean and
+  corrupts every value.** While switching telemetry decoding to `recv()`
+  into a packed `FGNetFDM` struct, `ntohf()`/`ntohd()` were first written to
+  take `uint32_t`/`uint64_t`, matching `htonl`-family convention -- but
+  called as `ntohf(raw.agl)` where `raw.agl` is a `float`. That's an
+  *implicit numeric conversion* (the float's already-nonsense bit-reinterpreted
+  value gets rounded/truncated/saturated to an integer), not the intended
+  bit-reinterpretation, and neither `/W4` nor `-Wall -Wextra -Wpedantic`
+  flagged it. Every decoded field came back wrong -- `longitude_rad` as
+  exactly `0` instead of the test's `1.111` -- caught immediately by
+  `tests/test_net_fdm.cpp`'s happy-path `CHECK_NEAR` values, not by the
+  compiler. Fixed by making `ntohf`/`ntohd` take `float`/`double` directly
+  and `memcpy` the bits out internally (`src/net_fdm.h`). This is the exact
+  case CLAUDE.md's "write tests before implementing" rule exists for: the
+  build looked fine start to finish.
+- **A `recv()` sized to exactly the expected payload silently hides an
+  oversize datagram, and hides it differently per platform.** POSIX `recv()`
+  truncates a too-large UDP datagram to the buffer size with no error;
+  Windows returns `-1`/`WSAEMSGSIZE` instead. Sizing the recv buffer one byte
+  past `FGNetFDM` (`RecvBuffer` in `src/main.cpp`, statically asserted to
+  `kPacketSize + 1`) makes both cases converge on the same outcome: a
+  409+-byte read that `net_fdm::decode()`'s size check rejects as
+  `WrongSize`, instead of a truncated 408 bytes of a bigger packet being
+  silently decoded as if it were valid.
 
 ## Future addition (not yet built)
 

@@ -70,20 +70,33 @@ bool UdpSocket::send(const std::string& data) {
     return sent == static_cast<int>(data.size());
 }
 
-bool UdpSocket::recvDatagram(std::vector<uint8_t>& buf) {
-    if (sock_ == kInvalid) return false;
+UdpSocket::Readable UdpSocket::waitReadable(int timeoutMs) {
+    if (sock_ == kInvalid) return Readable::Error;
 
-    static thread_local uint8_t scratch[2048];
-    int n = recvfrom(sock_, reinterpret_cast<char*>(scratch), static_cast<int>(sizeof(scratch)), 0, nullptr, nullptr);
-    if (n <= 0) {
-        // n == 0: a zero-length datagram (legal but useless here).
-        // n < 0: WSAEWOULDBLOCK (no data queued) is the expected common
-        // case for a non-blocking poll loop; any other error also just
-        // means "nothing usable right now" here.
-        return false;
-    }
-    buf.assign(scratch, scratch + n);
-    return true;
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    FD_SET(sock_, &readfds);
+
+    timeval tv;
+    tv.tv_sec = timeoutMs / 1000;
+    tv.tv_usec = (timeoutMs % 1000) * 1000;
+
+    // First argument is ignored on Windows; harmless to pass it there too.
+    int ready = select(0, &readfds, nullptr, nullptr, &tv);
+    if (ready == SOCKET_ERROR) return Readable::Error;
+    if (ready == 0) return Readable::Timeout;
+    return Readable::Ready;
+}
+
+int UdpSocket::recvInto(void* buf, std::size_t len) {
+    if (sock_ == kInvalid) return -1;
+
+    int n = recv(sock_, reinterpret_cast<char*>(buf), static_cast<int>(len), 0);
+    // n == 0: a zero-length datagram (legal but useless here).
+    // n < 0: WSAEWOULDBLOCK (no data queued) is the expected common case
+    // right after a spurious wakeup; any other error also just means
+    // "nothing usable right now" here -- caller treats <= 0 uniformly.
+    return n;
 }
 
 #else // POSIX
@@ -148,16 +161,28 @@ bool UdpSocket::send(const std::string& data) {
     return sent == static_cast<ssize_t>(data.size());
 }
 
-bool UdpSocket::recvDatagram(std::vector<uint8_t>& buf) {
-    if (sock_ == kInvalid) return false;
+UdpSocket::Readable UdpSocket::waitReadable(int timeoutMs) {
+    if (sock_ == kInvalid) return Readable::Error;
 
-    static thread_local uint8_t scratch[2048];
-    ssize_t n = recvfrom(sock_, scratch, sizeof(scratch), 0, nullptr, nullptr);
-    if (n <= 0) {
-        return false;
-    }
-    buf.assign(scratch, scratch + n);
-    return true;
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    FD_SET(sock_, &readfds);
+
+    timeval tv;
+    tv.tv_sec = timeoutMs / 1000;
+    tv.tv_usec = (timeoutMs % 1000) * 1000;
+
+    int ready = select(sock_ + 1, &readfds, nullptr, nullptr, &tv);
+    if (ready < 0) return Readable::Error;
+    if (ready == 0) return Readable::Timeout;
+    return Readable::Ready;
+}
+
+int UdpSocket::recvInto(void* buf, std::size_t len) {
+    if (sock_ == kInvalid) return -1;
+
+    ssize_t n = recv(sock_, buf, len, 0);
+    return static_cast<int>(n);
 }
 
 #endif

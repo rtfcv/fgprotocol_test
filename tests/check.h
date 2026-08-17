@@ -1,3 +1,11 @@
+/**
+ * @file check.h
+ * @brief Minimal assertion macros for CTest-registered executables.
+ *
+ * No framework dependency: a failed CHECK prints the failing expression
+ * and location and exits non-zero, which is all CTest needs to mark the
+ * test failed.
+ */
 #ifndef JSBSIM_TESTER_TESTS_CHECK_H
 #define JSBSIM_TESTER_TESTS_CHECK_H
 
@@ -5,9 +13,11 @@
 #include <cstdlib>
 #include <iostream>
 
-// Minimal assertion macros for CTest-registered executables. No framework
-// dependency: a failed CHECK prints the failing expression and location and
-// exits non-zero, which is all CTest needs to mark the test failed.
+/**
+ * @def CHECK(cond)
+ * @brief Fails the test (prints and exits 1) unless `cond` is true.
+ * @param cond Boolean expression to assert.
+ */
 #define CHECK(cond)                                                        \
     do {                                                                   \
         if (!(cond)) {                                                     \
@@ -17,6 +27,12 @@
         }                                                                  \
     } while (0)
 
+/**
+ * @def CHECK_EQ(a, b)
+ * @brief Fails the test unless `a == b`, printing both values on failure.
+ * @param a Left-hand value.
+ * @param b Right-hand value.
+ */
 #define CHECK_EQ(a, b)                                                     \
     do {                                                                   \
         auto a_ = (a);                                                    \
@@ -29,6 +45,13 @@
         }                                                                  \
     } while (0)
 
+/**
+ * @def CHECK_NEAR(a, b, eps)
+ * @brief Fails the test unless `a` and `b` are within `eps` of each other.
+ * @param a Left-hand value (converted to `double`).
+ * @param b Right-hand value (converted to `double`).
+ * @param eps Maximum allowed absolute difference.
+ */
 #define CHECK_NEAR(a, b, eps)                                              \
     do {                                                                   \
         double a_ = (a);                                                  \

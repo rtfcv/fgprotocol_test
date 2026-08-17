@@ -1,8 +1,12 @@
-// Tests for control::controlsAt() and control::buildDatagram(). Written
-// against src/control.h before src/control.cpp exists (CLAUDE.md: write
-// tests before implementing). No JSBSim, no network, no wall clock --
-// buildDatagram takes its timestamp as an explicit parameter so these stay
-// deterministic and fast.
+/**
+ * @file test_control.cpp
+ * @brief Tests for control::controlsAt() and control::buildDatagram().
+ *
+ * Written against src/control.h before src/control.cpp exists
+ * (CLAUDE.md: write tests before implementing). No JSBSim, no network, no
+ * wall clock -- buildDatagram takes its timestamp as an explicit
+ * parameter so these stay deterministic and fast.
+ */
 #include "control.h"
 
 #include <algorithm>
@@ -14,8 +18,11 @@
 
 namespace {
 
-// Splits "t,v1,v2,v3\n" into its comma-separated fields, dropping the
-// trailing newline.
+/**
+ * @brief Splits `"t,v1,v2,v3\n"` into its comma-separated fields.
+ * @param datagram Datagram to split; trailing newline is dropped.
+ * @return The fields, in order, with no trailing empty field.
+ */
 std::vector<std::string> splitFields(const std::string& datagram) {
     std::vector<std::string> fields;
     std::string cur;
@@ -36,6 +43,7 @@ std::vector<std::string> splitFields(const std::string& datagram) {
 
 } // namespace
 
+/// Runs all controlsAt()/buildDatagram() checks; exits non-zero via CHECK on first failure.
 int main() {
     // --- controlsAt: schedule boundaries and range -------------------
 

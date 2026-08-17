@@ -1,9 +1,12 @@
-// jsbsim_tester: the whole point of this repo in one loop.
-//
-// Sends a hardcoded control schedule to JSBSim's UDP <input>, receives
-// JSBSim's UDP <output type="FLIGHTGEAR"> telemetry, decodes it, and prints
-// it. Nothing else -- see CLAUDE.md / the project plan for why that bar is
-// deliberately kept this low.
+/**
+ * @file main.cpp
+ * @brief jsbsim_tester: the whole point of this repo in one loop.
+ *
+ * Sends a hardcoded control schedule to JSBSim's UDP `<input>`, receives
+ * JSBSim's UDP `<output type="FLIGHTGEAR">` telemetry, decodes it, and
+ * prints it. Nothing else -- see CLAUDE.md / the project plan for why
+ * that bar is deliberately kept this low.
+ */
 #include "udp_socket.h"
 
 #include "control.h"
@@ -19,40 +22,49 @@
 
 namespace {
 
-constexpr int kTelemetryPort = 5500;        // JSBSim <output> -> us (output/telemetry.xml)
+constexpr int kTelemetryPort = 5500;        ///< JSBSim `<output>` -> us (`output/telemetry.xml`).
 constexpr const char* kJsbsimHost = "127.0.0.1";
-constexpr int kControlPort = 5501;          // us -> JSBSim <input> (scripts/demo.xml)
+constexpr int kControlPort = 5501;          ///< Us -> JSBSim `<input>` (`scripts/demo.xml`).
 
-constexpr double kControlSendPeriod = 1.0 / 20.0; // Hz at which we send controls
-constexpr double kPrintPeriod = 1.0 / 5.0;        // Hz at which we print telemetry
-constexpr double kNoLinkTimeout = 1.0;            // seconds of silence before "NO LINK"
-constexpr int kSelectTimeoutMs = 5;               // how long each waitReadable() blocks
+constexpr double kControlSendPeriod = 1.0 / 20.0; ///< Hz at which we send controls.
+constexpr double kPrintPeriod = 1.0 / 5.0;        ///< Hz at which we print telemetry.
+constexpr double kNoLinkTimeout = 1.0;            ///< Seconds of silence before "NO LINK".
+constexpr int kSelectTimeoutMs = 5;               ///< How long each waitReadable() blocks.
 
-// recv() target for one telemetry datagram, sized one byte past a real
-// FGNetFDM. A well-formed 408-byte datagram fills exactly `pkt`; anything
-// larger spills into `overflow`, so the size net_fdm::decode() sees (the
-// byte count recv() returns) comes back as 409+ and is rejected as
-// WrongSize instead of being silently truncated by the OS (POSIX) or
-// bounced with WSAEMSGSIZE (Windows) -- see README's "Gotchas" for why
-// this asymmetry matters enough to guard against explicitly.
+/**
+ * @brief recv() target for one telemetry datagram, sized one byte past a real FGNetFDM.
+ *
+ * A well-formed 408-byte datagram fills exactly `pkt`; anything larger
+ * spills into `overflow`, so the size net_fdm::decode() sees (the byte
+ * count `recv()` returns) comes back as 409+ and is rejected as
+ * DecodeResult::WrongSize instead of being silently truncated by the OS
+ * (POSIX) or bounced with `WSAEMSGSIZE` (Windows) -- see README's
+ * "Gotchas" for why this asymmetry matters enough to guard against
+ * explicitly.
+ */
 struct RecvBuffer {
-    net_fdm::FGNetFDM pkt;
-    uint8_t overflow;
+    net_fdm::FGNetFDM pkt; ///< Receives exactly one FGNetFDM's worth of bytes.
+    uint8_t overflow;      ///< Catches byte 409+ of an oversize datagram.
 };
 static_assert(sizeof(RecvBuffer) == net_fdm::kPacketSize + 1, "unexpected padding in RecvBuffer");
 
+/// @return Seconds elapsed since the first call to this function.
 double nowSeconds() {
     static const auto start = std::chrono::steady_clock::now();
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 }
 
+/// @return `rad` converted from radians to degrees.
 double radToDeg(double rad) { return rad * 180.0 / 3.14159265358979323846; }
 
-// Emits the <input> block scripts/demo.xml must contain, generated from
-// control::kControlProperties rather than typed out by hand twice -- the
-// two are required to match exactly (JSBSim drops the whole datagram,
-// silently, on any property-count mismatch) and this is how they're kept
-// in sync after either one changes.
+/**
+ * @brief Emits the `<input>` block `scripts/demo.xml` must contain.
+ *
+ * Generated from control::kControlProperties rather than typed out by
+ * hand twice -- the two are required to match exactly (JSBSim drops the
+ * whole datagram, silently, on any property-count mismatch) and this is
+ * how they're kept in sync after either one changes.
+ */
 void printInputXml() {
     std::cout << "<input type=\"QTJSBSIM\" port=\"" << kControlPort << "\" rate=\"30\">\n";
     for (const char* prop : control::kControlProperties) {
@@ -63,6 +75,17 @@ void printInputXml() {
 
 } // namespace
 
+/**
+ * @brief Entry point.
+ *
+ * `--print-input-xml` prints the `<input>` block and exits; otherwise
+ * runs the send/receive/print loop until killed.
+ *
+ * @param argc Argument count.
+ * @param argv Argument vector.
+ * @return 0 on a clean `--print-input-xml` exit; 1 on any setup or
+ * `select()` failure. The main loop otherwise runs forever.
+ */
 int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         if (std::string(argv[i]) == "--print-input-xml") {

@@ -49,6 +49,20 @@ ctest --test-dir build --output-on-failure
 All three test executables (`tests/test_net_fdm.cpp`, `tests/test_control.cpp`,
 `tests/test_control_wire.cpp`) run entirely offline: no JSBSim, no network.
 
+### API docs
+
+Every declaration across `include/`, `src/`, and `tests/` is documented in
+Doxygen (`@brief`/`@param`/`@return`) style:
+
+```powershell
+doxygen Doxyfile
+```
+
+Output goes to `docs/html/index.html` (gitignored, generated -- not
+checked in). `include/fgprotocol/`'s two headers are the part worth
+reading if you're integrating the library elsewhere rather than working
+on this tester.
+
 ## Running
 
 Two processes, two terminals:

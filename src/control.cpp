@@ -1,3 +1,10 @@
+/**
+ * @file control.cpp
+ * @brief Implements this tester's control schedule and datagram adapter.
+ *
+ * See control.h for the documented public API; this file is
+ * implementation only.
+ */
 #include "control.h"
 
 #include "fgprotocol/control_wire.h"

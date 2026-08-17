@@ -1,10 +1,14 @@
-// Tests for net_fdm::decode() (include/fgprotocol/net_fdm.h). Originally
-// written against the header before net_fdm.cpp existed (CLAUDE.md: write
-// tests before implementing); decode() is now header-only itself, folded
-// into net_fdm.h directly.
-//
-// No JSBSim and no network needed -- everything here is a synthetic,
-// hand-built buffer standing in for a real UDP datagram.
+/**
+ * @file test_net_fdm.cpp
+ * @brief Tests for net_fdm::decode() (include/fgprotocol/net_fdm.h).
+ *
+ * Originally written against the header before net_fdm.cpp existed
+ * (CLAUDE.md: write tests before implementing); decode() is now
+ * header-only itself, folded into net_fdm.h directly.
+ *
+ * No JSBSim and no network needed -- everything here is a synthetic,
+ * hand-built buffer standing in for a real UDP datagram.
+ */
 #include "fgprotocol/net_fdm.h"
 
 #include <cstddef>
@@ -15,39 +19,51 @@
 
 namespace {
 
-// RETAINED AS REFERENCE, TEST-ONLY -- NOT PART OF THE LIBRARY.
-//
-// net_fdm::decode() (include/fgprotocol/net_fdm.h) reads FlightGear's wire
-// format by memcpy'ing straight into the packed FGNetFDM struct and
-// byte-swapping each field with ntoh32()/ntohf()/ntohd(). BigEndianReader
-// here is the earlier, padding-and-alignment-agnostic implementation of the
-// same decode: a sequential byte-cursor that never lays a struct over the
-// wire bytes at all, so it can't be broken by a packing/alignment mistake
-// in FGNetFDM. It's deliberately kept out of the public library header --
-// nothing a library consumer needs, purely a cross-check this repo's own
-// tests use to keep the "real" decoder honest -- so it lives here instead,
-// with internal linkage (this anonymous namespace), used only by the oracle
-// check further down in main(). A future change to net_fdm.h's field list
-// still has to keep both in sync, or that check fails -- unlike a plain
-// unused class, this one won't rot silently.
-//
-// Sequential big-endian byte-cursor reader. Each call reads at the current
-// position and advances -- offsets are never computed by hand, so the field
-// list here and in net_fdm.h staying in the same order is the only thing
-// that has to be kept correct, and a mismatch in total length is caught
-// below (ranOff()/pos() != kPacketSize) rather than silently misreading.
+/**
+ * @brief Sequential big-endian byte-cursor reader; test-only, not part of the library.
+ *
+ * RETAINED AS REFERENCE, TEST-ONLY -- NOT PART OF THE LIBRARY.
+ *
+ * net_fdm::decode() (include/fgprotocol/net_fdm.h) reads FlightGear's wire
+ * format by `memcpy`'ing straight into the packed FGNetFDM struct and
+ * byte-swapping each field with ntoh32()/ntohf()/ntohd(). BigEndianReader
+ * here is the earlier, padding-and-alignment-agnostic implementation of
+ * the same decode: a sequential byte-cursor that never lays a struct over
+ * the wire bytes at all, so it can't be broken by a packing/alignment
+ * mistake in FGNetFDM. It's deliberately kept out of the public library
+ * header -- nothing a library consumer needs, purely a cross-check this
+ * repo's own tests use to keep the "real" decoder honest -- so it lives
+ * here instead, with internal linkage (this anonymous namespace), used
+ * only by the oracle check further down in main(). A future change to
+ * net_fdm.h's field list still has to keep both in sync, or that check
+ * fails -- unlike a plain unused class, this one won't rot silently.
+ *
+ * Each call reads at the current position and advances -- offsets are
+ * never computed by hand, so the field list here and in net_fdm.h staying
+ * in the same order is the only thing that has to be kept correct, and a
+ * mismatch in total length is caught below (ranOff()/pos() !=
+ * kPacketSize) rather than silently misreading.
+ */
 class BigEndianReader {
 public:
+    /**
+     * @brief Constructs a reader over `size` bytes starting at `data`.
+     * @param data Pointer to the buffer to read.
+     * @param size Number of bytes available at `data`.
+     */
     BigEndianReader(const uint8_t* data, std::size_t size) : data_(data), size_(size) {}
 
+    /// @return The next 4 bytes as a big-endian `uint32_t`.
     uint32_t u32() {
         uint32_t v = 0;
         for (int i = 0; i < 4; ++i) v = (v << 8) | next();
         return v;
     }
 
+    /// @return The next 4 bytes as a big-endian `int32_t`.
     int32_t i32() { return static_cast<int32_t>(u32()); }
 
+    /// @return The next 4 bytes as a big-endian `float`.
     float f32() {
         uint32_t bits = u32();
         float v;
@@ -55,6 +71,7 @@ public:
         return v;
     }
 
+    /// @return The next 8 bytes as a big-endian `double`.
     double f64() {
         uint64_t bits = 0;
         for (int i = 0; i < 8; ++i) bits = (bits << 8) | next();
@@ -63,17 +80,21 @@ public:
         return v;
     }
 
+    /// Reads `N` consecutive `u32()` values into `arr`.
     template <std::size_t N>
     void u32arr(std::array<uint32_t, N>& arr) {
         for (auto& x : arr) x = u32();
     }
 
+    /// Reads `N` consecutive `f32()` values into `arr`.
     template <std::size_t N>
     void f32arr(std::array<float, N>& arr) {
         for (auto& x : arr) x = f32();
     }
 
+    /// @return Number of bytes consumed so far.
     std::size_t pos() const { return pos_; }
+    /// @return Whether a read has gone past the end of the buffer.
     bool ranOff() const { return overrun_; }
 
 private:
@@ -91,11 +112,18 @@ private:
     bool overrun_ = false;
 };
 
-// Test-only oracle: decodes the same bytes as net_fdm::decode(), but via
-// BigEndianReader above instead of memcpy-into-FGNetFDM + ntoh*(). Mirrors
-// decode()'s WrongSize/WrongVersion/Ok contract exactly (WrongSize zeroes
-// `out`, WrongVersion still populates it) so a field-by-field comparison
-// between the two is meaningful.
+/**
+ * @brief Test-only oracle: decodes the same bytes as net_fdm::decode(), but via BigEndianReader.
+ *
+ * Mirrors decode()'s WrongSize/WrongVersion/Ok contract exactly
+ * (WrongSize zeroes `out`, WrongVersion still populates it) so a
+ * field-by-field comparison between the two is meaningful.
+ *
+ * @param data Pointer to `size` bytes of raw datagram.
+ * @param size Byte count of `data`.
+ * @param out Receives the decoded Packet.
+ * @return net_fdm::DecodeResult::Ok, WrongSize, or WrongVersion.
+ */
 net_fdm::DecodeResult decodeWithBigEndianReader(const uint8_t* data, std::size_t size,
                                                  net_fdm::Packet& out) {
     out = net_fdm::Packet{};
@@ -194,7 +222,7 @@ net_fdm::DecodeResult decodeWithBigEndianReader(const uint8_t* data, std::size_t
     return net_fdm::DecodeResult::Ok;
 }
 
-// Appends `v` to `buf` as 4 big-endian bytes.
+/// Appends `v` to `buf` as 4 big-endian bytes.
 void putU32(std::vector<uint8_t>& buf, uint32_t v) {
     buf.push_back(static_cast<uint8_t>(v >> 24));
     buf.push_back(static_cast<uint8_t>(v >> 16));
@@ -202,16 +230,19 @@ void putU32(std::vector<uint8_t>& buf, uint32_t v) {
     buf.push_back(static_cast<uint8_t>(v));
 }
 
+/// Appends `v` to `buf` as 4 big-endian bytes.
 void putI32(std::vector<uint8_t>& buf, int32_t v) {
     putU32(buf, static_cast<uint32_t>(v));
 }
 
+/// Appends `v` to `buf` as 4 big-endian bytes.
 void putF32(std::vector<uint8_t>& buf, float v) {
     uint32_t bits;
     std::memcpy(&bits, &v, sizeof(bits));
     putU32(buf, bits);
 }
 
+/// Appends `v` to `buf` as 8 big-endian bytes.
 void putF64(std::vector<uint8_t>& buf, double v) {
     uint64_t bits;
     std::memcpy(&bits, &v, sizeof(bits));
@@ -220,10 +251,16 @@ void putF64(std::vector<uint8_t>& buf, double v) {
     }
 }
 
-// Builds one full, valid 408-byte FGNetFDM v24 datagram with a distinct,
-// recognizable value in every field (so a field-order swap -- the realistic
-// bug here -- shows up as the wrong value landing in the wrong member,
-// rather than two fields that happen to share a value hiding the mistake).
+/**
+ * @brief Builds one full, valid 408-byte FGNetFDM v24 datagram.
+ *
+ * Every field gets a distinct, recognizable value (so a field-order swap
+ * -- the realistic bug here -- shows up as the wrong value landing in the
+ * wrong member, rather than two fields that happen to share a value
+ * hiding the mistake).
+ *
+ * @return The raw datagram bytes.
+ */
 std::vector<uint8_t> buildValidPacket() {
     std::vector<uint8_t> b;
     b.reserve(net_fdm::kPacketSize);
@@ -299,13 +336,20 @@ std::vector<uint8_t> buildValidPacket() {
     return b;
 }
 
-// Asserts every field of `a` and `b` matches. Used to cross-check the live
-// decode() (memcpy into packed FGNetFDM + ntoh*) against
-// decodeWithBigEndianReader() (the retained byte-cursor decoder) on the
-// same input -- both are pure functions of the same bytes, so they should
-// come back bit-for-bit identical, not just close. buildValidPacket() gives
-// every field a distinct value specifically so a field landing in the wrong
-// member here would be caught, not masked by two fields sharing a value.
+/**
+ * @brief Asserts every field of `a` and `b` matches.
+ *
+ * Used to cross-check the live decode() (memcpy into packed FGNetFDM +
+ * ntoh*) against decodeWithBigEndianReader() (the retained byte-cursor
+ * decoder) on the same input -- both are pure functions of the same
+ * bytes, so they should come back bit-for-bit identical, not just close.
+ * buildValidPacket() gives every field a distinct value specifically so
+ * a field landing in the wrong member here would be caught, not masked
+ * by two fields sharing a value.
+ *
+ * @param a First packet to compare.
+ * @param b Second packet to compare.
+ */
 void checkPacketsMatch(const net_fdm::Packet& a, const net_fdm::Packet& b) {
     CHECK_EQ(a.version, b.version);
     CHECK_NEAR(a.longitude_rad, b.longitude_rad, 0.0);
@@ -382,6 +426,7 @@ void checkPacketsMatch(const net_fdm::Packet& a, const net_fdm::Packet& b) {
 
 } // namespace
 
+/// Runs all net_fdm::decode() checks; exits non-zero via CHECK on first failure.
 int main() {
     // The buffer builder itself must produce exactly one packet's worth of
     // bytes, or every test below is checking the wrong thing.

@@ -1,3 +1,10 @@
+/**
+ * @file udp_socket.cpp
+ * @brief Implements WinsockGuard/UdpSocket for Windows (Winsock) and POSIX.
+ *
+ * See udp_socket.h for the documented public API; this file is
+ * implementation only, split by `#if defined(_WIN32)`.
+ */
 #include "udp_socket.h"
 
 #include <cstring>

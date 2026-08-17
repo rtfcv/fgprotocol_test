@@ -1,10 +1,14 @@
-// Tests for fgudp_input::buildDatagram() (include/fgprotocol/control_wire.h),
-// exercised directly against a plain double[] rather than through this
-// tester's own Controls struct (see tests/test_control.cpp for that side).
-// The point of this file is to prove the library function is genuinely
-// decoupled from any specific property list or aircraft's control scheme --
-// it doesn't know about "elevator" or "3 values," only "some ordered list
-// of numbers."
+/**
+ * @file test_control_wire.cpp
+ * @brief Tests for fgudp_input::buildDatagram() (include/fgprotocol/control_wire.h).
+ *
+ * Exercised directly against a plain `double[]` rather than through this
+ * tester's own Controls struct (see tests/test_control.cpp for that
+ * side). The point of this file is to prove the library function is
+ * genuinely decoupled from any specific property list or aircraft's
+ * control scheme -- it doesn't know about "elevator" or "3 values," only
+ * "some ordered list of numbers."
+ */
 #include "fgprotocol/control_wire.h"
 
 #include <algorithm>
@@ -16,8 +20,11 @@
 
 namespace {
 
-// Splits "t,v1,v2,...\n" into its comma-separated fields, dropping the
-// trailing newline.
+/**
+ * @brief Splits `"t,v1,v2,...\n"` into its comma-separated fields.
+ * @param datagram Datagram to split; trailing newline is dropped.
+ * @return The fields, in order, with no trailing empty field.
+ */
 std::vector<std::string> splitFields(const std::string& datagram) {
     std::vector<std::string> fields;
     std::string cur;
@@ -38,6 +45,7 @@ std::vector<std::string> splitFields(const std::string& datagram) {
 
 } // namespace
 
+/// Runs all fgudp_input::buildDatagram() checks; exits non-zero via CHECK on first failure.
 int main() {
     // --- field count, format, ordering ---------------------------------
 

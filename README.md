@@ -342,13 +342,17 @@ not by guessing:
   test oracle is often better than deleting it -- but only if something
   actually exercises it, and confirming that takes deliberately breaking
   one side and watching the test catch it, not just reading the
-  assertions. (This particular assertion has a known gap: `decode()`
+  assertions. (This same gap bit the array fields directly: `decode()`
   deliberately leaves array elements index-reversed while both oracles
-  produce correctly-ordered arrays, so a real difference exists -- but
-  `buildValidPacket()`'s array fields all use one repeated value per
-  array, so the comparison can't see it. Not fixed, since it wasn't
-  asked for -- noted here so it isn't mistaken for coverage it doesn't
-  have.)
+  produce correctly-ordered arrays, so a real difference exists there --
+  but `buildValidPacket()`'s array fields originally all used one repeated
+  value per array, so the comparison couldn't see it. Fixed by giving each
+  array element a distinct value and comparing `a[i]` against the oracle's
+  `[N-1-i]`; reverting the fix back to a naive same-index comparison and
+  rerunning `ctest` confirmed it now fails on the reversal, then the fix
+  was restored. Left here as the same lesson applied a second time: a
+  fixture with indistinguishable values hides real bugs as surely as a
+  test that never runs.)
 - **Shorter, more "clever" code is not automatically faster code -- and
   re-measure after every rewrite, not just once.** A whole-buffer-reversal
   decode looked like it should beat the straightforward per-field

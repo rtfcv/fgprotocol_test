@@ -46,8 +46,8 @@ still fails with `CMAKE_AR-NOTFOUND`.
 ctest --test-dir build --output-on-failure
 ```
 
-Both test executables (`tests/test_net_fdm.cpp`, `tests/test_control.cpp`)
-run entirely offline: no JSBSim, no network.
+All three test executables (`tests/test_net_fdm.cpp`, `tests/test_control.cpp`,
+`tests/test_control_wire.cpp`) run entirely offline: no JSBSim, no network.
 
 ## Running
 
@@ -126,29 +126,51 @@ its own FDM, so any aircraft model works.
               decode() + print, throttled 5 Hz
 ```
 
-- **Telemetry** (`src/net_fdm.h`/`.cpp`): FlightGear's real native-fdm binary
-  protocol (`FGNetFDM`, protocol version 24, exactly 408 bytes, every field
-  big-endian) -- not JSBSim's ASCII CSV `<output type="SOCKET">`. `recv()`
-  reads straight into a `#pragma pack(1)` `FGNetFDM` struct matching that
-  layout field-for-field, and hand-written `ntohf()`/`ntohd()` byte-swap each
-  field out of it (deliberately not `<winsock2.h>`'s `ntohl`/`ntohs` --
-  pulling that header into `net_fdm.h` would force the Winsock-free unit
-  tests to link against sockets). A `static_assert(sizeof(FGNetFDM) == 408)`
-  is what actually earns trust in the layout: a field-list mistake fails the
-  *build*, not a live run. An earlier byte-cursor decoder
-  (`BigEndianReader`, still in `src/net_fdm.cpp`, retained as reference but
-  uncalled) took the padding-and-alignment-agnostic approach instead, never
-  laying a struct over the wire bytes at all -- worth reaching for again if
-  the packed-struct path is ever hard to debug.
-- **Control** (`src/control.h`/`.cpp`): built for JSBSim's `FGUDPInputSocket`,
-  which is strict -- `timestamp,v1,v2,v3\n`, comma count must exactly match
-  the declared `<property>` count, and the timestamp must strictly increase
-  or the whole packet is dropped silently, with no reply.
-- **Sockets** (`src/udp_socket.h`/`.cpp`): non-blocking Winsock sockets, with
-  `waitReadable()` wrapping `select()` on a `timeval` so the main loop
-  blocks until either a telemetry datagram is queued or a short timeout
-  elapses, rather than polling on a fixed sleep. A `WinsockGuard` handles
-  `WSAStartup`/`WSACleanup` lifetime.
+The repo is split into a header-only protocol library and a tester built on
+top of it:
+
+- **`include/fgprotocol/`** -- the wire formats, and *only* the wire formats.
+  Zero platform dependencies (standard library only: `<array>`, `<cstdint>`,
+  `<cmath>`, ...), zero sockets, zero opinions about what to send or what to
+  do with what's decoded. This is what makes it genuinely reusable outside
+  this repo (see "Using this library elsewhere" below).
+  - **`net_fdm.h`**: FlightGear's real native-fdm binary protocol (`FGNetFDM`,
+    protocol version 24, exactly 408 bytes, every field big-endian) -- not
+    JSBSim's ASCII CSV `<output type="SOCKET">`. `recv()` reads straight into
+    a `#pragma pack(1)` `FGNetFDM` struct matching that layout field-for-field,
+    and hand-written `ntohf()`/`ntohd()` byte-swap each field out of it
+    (deliberately not `<winsock2.h>`'s `ntohl`/`ntohs` -- pulling that header
+    in would force every consumer to link against a platform's socket
+    library just to decode a struct). A `static_assert(sizeof(FGNetFDM) ==
+    408)` is what actually earns trust in the layout: a field-list mistake
+    fails the *build*, not a live run. `decode()` is fully header-only
+    (`inline`) -- no separate `.cpp` to link. An earlier byte-cursor decoder
+    (`BigEndianReader`) took the padding-and-alignment-agnostic approach
+    instead, never laying a struct over the wire bytes at all; it's retained
+    as test-only reference material in `tests/test_net_fdm.cpp` (not part of
+    the library's public surface), cross-checked against `decode()` there so
+    it can't silently rot.
+  - **`control_wire.h`**: JSBSim's `FGUDPInputSocket` wire format --
+    `timestamp,v1,v2,...,vN\n` for an arbitrary ordered list of values, comma
+    count must exactly match the declared `<property>` count, and the
+    timestamp must strictly increase or the whole packet is dropped silently,
+    with no reply. `fgudp_input::buildDatagram()` only knows this format; it
+    has no idea what the values mean or how many of them there are supposed
+    to be -- that's the caller's job.
+- **`src/`** -- the tester: everything about *this* particular test run.
+  - **`control.h`/`.cpp`**: which JSBSim properties to drive
+    (`kControlProperties`) and what values to send when (`controlsAt()`,
+    the hardcoded demo schedule). `buildDatagram()` here is a thin adapter
+    packing this demo's 3-value `Controls` struct into the array
+    `fgudp_input::buildDatagram()` expects.
+  - **`udp_socket.h`/`.cpp`**: non-blocking Winsock sockets, with
+    `waitReadable()` wrapping `select()` on a `timeval` so the main loop
+    blocks until either a telemetry datagram is queued or a short timeout
+    elapses, rather than polling on a fixed sleep. A `WinsockGuard` handles
+    `WSAStartup`/`WSACleanup` lifetime. Sockets stay out of the library
+    deliberately -- see "Using this library elsewhere" for why.
+  - **`main.cpp`**: the loop tying it together -- send controls at 20 Hz,
+    drain and decode telemetry, print at 5 Hz.
 - **Where the wire config lives**: deliberately *not* in the aircraft file.
   - [`aircraft/minimal/minimal.xml`](aircraft/minimal/minimal.xml) is pure
     flight dynamics -- no `<input>`/`<output>` at all.
@@ -166,6 +188,40 @@ its own FDM, so any aircraft model works.
   mismatch). Run `jsbsim_tester.exe --print-input-xml` to print the
   `<input>` block generated from the C++ array and diff it against the XML
   if you ever suspect drift.
+
+### Using this library elsewhere
+
+`include/fgprotocol/` doesn't depend on anything else in this repo -- no
+sockets, no app-specific structs -- so it can be reused standalone, in
+increasing order of effort:
+
+- **Copy-paste vendoring.** Both headers are self-contained (standard
+  library only). Copy `net_fdm.h`/`control_wire.h` into another project's
+  include tree and `#include` them; no build-system changes needed here at
+  all.
+- **Git submodule + scoped `add_subdirectory()`.** `include/fgprotocol/` has
+  its own standalone `CMakeLists.txt` (not dependent on this repo's root
+  file), specifically so a consumer can point at just that directory and not
+  drag in `jsbsim_tester`'s own build/tests:
+  ```cmake
+  add_subdirectory(external/fgprotocol_test/include/fgprotocol)
+  target_link_libraries(myapp PRIVATE fgprotocol)
+  ```
+- **`FetchContent`**, no submodule bookkeeping needed:
+  ```cmake
+  include(FetchContent)
+  FetchContent_Declare(fgprotocol
+    GIT_REPOSITORY https://github.com/rtfcv/fgprotocol_test.git
+    GIT_TAG        <commit-or-tag>
+    SOURCE_SUBDIR  include/fgprotocol)
+  FetchContent_MakeAvailable(fgprotocol)
+  target_link_libraries(myapp PRIVATE fgprotocol)
+  ```
+
+`include/fgprotocol/CMakeLists.txt` also calls its own `project(fgprotocol
+LANGUAGES NONE)`, so it configures standalone (`cmake -S include/fgprotocol
+-B build`) without requiring a working C/C++ toolchain -- an INTERFACE
+library over two headers has nothing to compile.
 
 ### Why a hand-written aircraft, not FlightGear's stock c172p
 
@@ -234,9 +290,9 @@ not by guessing:
   exactly `0` instead of the test's `1.111` -- caught immediately by
   `tests/test_net_fdm.cpp`'s happy-path `CHECK_NEAR` values, not by the
   compiler. Fixed by making `ntohf`/`ntohd` take `float`/`double` directly
-  and `memcpy` the bits out internally (`src/net_fdm.h`). This is the exact
-  case CLAUDE.md's "write tests before implementing" rule exists for: the
-  build looked fine start to finish.
+  and `memcpy` the bits out internally (`include/fgprotocol/net_fdm.h`).
+  This is the exact case CLAUDE.md's "write tests before implementing" rule
+  exists for: the build looked fine start to finish.
 - **A `recv()` sized to exactly the expected payload silently hides an
   oversize datagram, and hides it differently per platform.** POSIX `recv()`
   truncates a too-large UDP datagram to the buffer size with no error;

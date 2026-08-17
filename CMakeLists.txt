@@ -48,18 +48,27 @@ function(jsbsim_tester_harden_exe target)
     endif()
 endfunction()
 
-# jsbsim_link: everything that's pure logic and unit-testable without a
-# running JSBSim -- the wire decoder and the hardcoded control schedule.
-# main.cpp (networking + the console loop) is deliberately NOT in this lib,
-# so the test executables below never need Winsock or a socket to build.
-add_library(jsbsim_link STATIC
-    src/net_fdm.cpp
-    src/control.cpp
-)
-target_include_directories(jsbsim_link PUBLIC ${CMAKE_SOURCE_DIR}/src)
+# fgprotocol: the header-only FlightGear/JSBSim wire-format library (FGNetFDM
+# decode, FGUDPInputSocket encode). Declared in its own standalone
+# include/fgprotocol/CMakeLists.txt, not inline here, specifically so
+# another project can add_subdirectory()/FetchContent just that directory
+# (e.g. via a git submodule) without also configuring jsbsim_tester's own
+# executable and tests below. See README.md's "using this library elsewhere"
+# section.
+add_subdirectory(include/fgprotocol)
+
+# tester_control: this tester's own control policy -- which JSBSim
+# properties to drive and what values to send when (src/control.cpp) --
+# built on top of fgprotocol's generic datagram encoder. Pure logic,
+# unit-testable without a running JSBSim. main.cpp/udp_socket.cpp
+# (networking + the console loop) are deliberately NOT in this lib, so the
+# test executables below never need Winsock or a socket to build.
+add_library(tester_control STATIC src/control.cpp)
+target_include_directories(tester_control PUBLIC ${CMAKE_SOURCE_DIR}/src)
+target_link_libraries(tester_control PUBLIC fgprotocol)
 
 add_executable(jsbsim_tester src/main.cpp src/udp_socket.cpp)
-target_link_libraries(jsbsim_tester PRIVATE jsbsim_link)
+target_link_libraries(jsbsim_tester PRIVATE tester_control)
 jsbsim_tester_harden_exe(jsbsim_tester)
 
 if(WIN32)
@@ -69,12 +78,25 @@ endif()
 
 enable_testing()
 
+# test_net_fdm: net_fdm.h's decode() is fully header-only now, so this only
+# needs the library itself, not tester_control.
 add_executable(test_net_fdm tests/test_net_fdm.cpp)
-target_link_libraries(test_net_fdm PRIVATE jsbsim_link)
+target_link_libraries(test_net_fdm PRIVATE fgprotocol)
 jsbsim_tester_harden_exe(test_net_fdm)
 add_test(NAME test_net_fdm COMMAND test_net_fdm)
 
+# test_control: exercises control.cpp's controlsAt()/buildDatagram() --
+# this tester's own policy, through its own public API -- so it still needs
+# tester_control.
 add_executable(test_control tests/test_control.cpp)
-target_link_libraries(test_control PRIVATE jsbsim_link)
+target_link_libraries(test_control PRIVATE tester_control)
 jsbsim_tester_harden_exe(test_control)
 add_test(NAME test_control COMMAND test_control)
+
+# test_control_wire: exercises fgudp_input::buildDatagram() directly against
+# a plain double[], independent of control.cpp's Controls struct -- proves
+# the library function itself is decoupled from any specific control scheme.
+add_executable(test_control_wire tests/test_control_wire.cpp)
+target_link_libraries(test_control_wire PRIVATE fgprotocol)
+jsbsim_tester_harden_exe(test_control_wire)
+add_test(NAME test_control_wire COMMAND test_control_wire)

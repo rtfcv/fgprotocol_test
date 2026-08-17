@@ -1,9 +1,6 @@
 #include "control.h"
 
-#include <cfloat>
-#include <cmath>
-#include <iomanip>
-#include <sstream>
+#include "fgprotocol/control_wire.h"
 
 namespace control {
 
@@ -23,20 +20,11 @@ Controls controlsAt(double t) {
 }
 
 std::string buildDatagram(const Controls& c, double t, double& lastTimestamp) {
-    // FGUDPInputSocket drops any datagram whose timestamp does not strictly
-    // increase over the last one it accepted. The caller's clock normally
-    // satisfies that on its own; nextafter() guarantees it even if two sends
-    // land in the same tick, or if t itself doesn't advance.
-    double stamped = (t > lastTimestamp) ? t : std::nextafter(lastTimestamp, DBL_MAX);
-    lastTimestamp = stamped;
-
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(6) << stamped;
-    for (double v : {c.elevator, c.aileron, c.rudder}) {
-        oss << ',' << v;
-    }
-    oss << '\n';
-    return oss.str();
+    // {elevator, aileron, rudder}, in kControlProperties order -- the wire
+    // format itself (comma-separated line, strictly-increasing timestamp)
+    // is fgudp_input::buildDatagram()'s job, not this file's.
+    const double values[] = {c.elevator, c.aileron, c.rudder};
+    return fgudp_input::buildDatagram(values, 3, t, lastTimestamp);
 }
 
 } // namespace control

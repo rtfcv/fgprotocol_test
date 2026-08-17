@@ -4,10 +4,16 @@
 #include <array>
 #include <string>
 
-// Everything to do with the hardcoded control input this demo sends to
-// JSBSim, and the small subset of JSBSim's FGUDPInputSocket wire format
-// needed to send it. Deliberately the only place control values are chosen
-// -- nothing else in this program may add or infer a control input.
+// This tester's own control policy: which JSBSim properties to drive
+// (kControlProperties), what values to send and when (controlsAt()), and
+// nothing else -- deliberately the only place control values are chosen,
+// nothing else in this program may add or infer a control input. The
+// FGUDPInputSocket wire format itself (the "timestamp,v1,...,vN\n" line and
+// the strictly-increasing-timestamp rule) lives in
+// include/fgprotocol/control_wire.h instead: that part is generic to any
+// property list, so it isn't this file's concern. buildDatagram() below is
+// just the adapter between the two -- this demo's 3-value Controls struct
+// on one side, the library's arbitrary-length value array on the other.
 namespace control {
 
 // Must stay in the same order as <input>'s <property> list in
@@ -40,11 +46,11 @@ struct Controls {
 // aerodynamics stay physically sane.
 Controls controlsAt(double t);
 
-// Builds one FGUDPInputSocket datagram: "timestamp,v1,v2,v3\n", matching
-// kControlProperties order. `lastTimestamp` is both read and updated: the
-// returned timestamp is guaranteed strictly greater than the previous call's,
-// bumping via nextafter() if wall-clock time didn't advance enough on its
-// own -- JSBSim silently drops any packet whose timestamp doesn't increase.
+// Builds one FGUDPInputSocket datagram carrying {elevator, aileron, rudder},
+// in that order -- matching kControlProperties. Thin adapter over
+// fgudp_input::buildDatagram() (include/fgprotocol/control_wire.h), which
+// owns the actual wire format and the strictly-increasing-timestamp rule;
+// see that header for what `lastTimestamp` does and why.
 std::string buildDatagram(const Controls& c, double t, double& lastTimestamp);
 
 } // namespace control

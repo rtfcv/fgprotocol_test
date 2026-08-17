@@ -1,9 +1,11 @@
-// Tests for net_fdm::decode(). Written against src/net_fdm.h before
-// src/net_fdm.cpp exists (CLAUDE.md: write tests before implementing).
+// Tests for net_fdm::decode() (include/fgprotocol/net_fdm.h). Originally
+// written against the header before net_fdm.cpp existed (CLAUDE.md: write
+// tests before implementing); decode() is now header-only itself, folded
+// into net_fdm.h directly.
 //
 // No JSBSim and no network needed -- everything here is a synthetic,
 // hand-built buffer standing in for a real UDP datagram.
-#include "net_fdm.h"
+#include "fgprotocol/net_fdm.h"
 
 #include <cstddef>
 #include <cstring>
@@ -12,6 +14,185 @@
 #include "check.h"
 
 namespace {
+
+// RETAINED AS REFERENCE, TEST-ONLY -- NOT PART OF THE LIBRARY.
+//
+// net_fdm::decode() (include/fgprotocol/net_fdm.h) reads FlightGear's wire
+// format by memcpy'ing straight into the packed FGNetFDM struct and
+// byte-swapping each field with ntoh32()/ntohf()/ntohd(). BigEndianReader
+// here is the earlier, padding-and-alignment-agnostic implementation of the
+// same decode: a sequential byte-cursor that never lays a struct over the
+// wire bytes at all, so it can't be broken by a packing/alignment mistake
+// in FGNetFDM. It's deliberately kept out of the public library header --
+// nothing a library consumer needs, purely a cross-check this repo's own
+// tests use to keep the "real" decoder honest -- so it lives here instead,
+// with internal linkage (this anonymous namespace), used only by the oracle
+// check further down in main(). A future change to net_fdm.h's field list
+// still has to keep both in sync, or that check fails -- unlike a plain
+// unused class, this one won't rot silently.
+//
+// Sequential big-endian byte-cursor reader. Each call reads at the current
+// position and advances -- offsets are never computed by hand, so the field
+// list here and in net_fdm.h staying in the same order is the only thing
+// that has to be kept correct, and a mismatch in total length is caught
+// below (ranOff()/pos() != kPacketSize) rather than silently misreading.
+class BigEndianReader {
+public:
+    BigEndianReader(const uint8_t* data, std::size_t size) : data_(data), size_(size) {}
+
+    uint32_t u32() {
+        uint32_t v = 0;
+        for (int i = 0; i < 4; ++i) v = (v << 8) | next();
+        return v;
+    }
+
+    int32_t i32() { return static_cast<int32_t>(u32()); }
+
+    float f32() {
+        uint32_t bits = u32();
+        float v;
+        std::memcpy(&v, &bits, sizeof(v));
+        return v;
+    }
+
+    double f64() {
+        uint64_t bits = 0;
+        for (int i = 0; i < 8; ++i) bits = (bits << 8) | next();
+        double v;
+        std::memcpy(&v, &bits, sizeof(v));
+        return v;
+    }
+
+    template <std::size_t N>
+    void u32arr(std::array<uint32_t, N>& arr) {
+        for (auto& x : arr) x = u32();
+    }
+
+    template <std::size_t N>
+    void f32arr(std::array<float, N>& arr) {
+        for (auto& x : arr) x = f32();
+    }
+
+    std::size_t pos() const { return pos_; }
+    bool ranOff() const { return overrun_; }
+
+private:
+    uint8_t next() {
+        if (pos_ >= size_) {
+            overrun_ = true;
+            return 0;
+        }
+        return data_[pos_++];
+    }
+
+    const uint8_t* data_;
+    std::size_t size_;
+    std::size_t pos_ = 0;
+    bool overrun_ = false;
+};
+
+// Test-only oracle: decodes the same bytes as net_fdm::decode(), but via
+// BigEndianReader above instead of memcpy-into-FGNetFDM + ntoh*(). Mirrors
+// decode()'s WrongSize/WrongVersion/Ok contract exactly (WrongSize zeroes
+// `out`, WrongVersion still populates it) so a field-by-field comparison
+// between the two is meaningful.
+net_fdm::DecodeResult decodeWithBigEndianReader(const uint8_t* data, std::size_t size,
+                                                 net_fdm::Packet& out) {
+    out = net_fdm::Packet{};
+
+    if (size != net_fdm::kPacketSize) {
+        return net_fdm::DecodeResult::WrongSize;
+    }
+
+    BigEndianReader r(data, size);
+    net_fdm::Packet p;
+
+    p.version = r.u32();
+    r.u32(); // padding, discarded
+
+    p.longitude_rad = r.f64();
+    p.latitude_rad = r.f64();
+    p.altitude_m = r.f64();
+    p.agl_m = r.f32();
+    p.phi_rad = r.f32();
+    p.theta_rad = r.f32();
+    p.psi_rad = r.f32();
+    p.alpha_rad = r.f32();
+    p.beta_rad = r.f32();
+
+    p.phidot_rad_s = r.f32();
+    p.thetadot_rad_s = r.f32();
+    p.psidot_rad_s = r.f32();
+    p.vcas_kt = r.f32();
+    p.climb_rate_fps = r.f32();
+    p.v_north_fps = r.f32();
+    p.v_east_fps = r.f32();
+    p.v_down_fps = r.f32();
+    p.v_body_u_fps = r.f32();
+    p.v_body_v_fps = r.f32();
+    p.v_body_w_fps = r.f32();
+
+    p.a_x_pilot_fps2 = r.f32();
+    p.a_y_pilot_fps2 = r.f32();
+    p.a_z_pilot_fps2 = r.f32();
+
+    p.stall_warning = r.f32();
+    p.slip_deg = r.f32();
+
+    p.num_engines = r.u32();
+    r.u32arr(p.eng_state);
+    r.f32arr(p.rpm);
+    r.f32arr(p.fuel_flow_gph);
+    r.f32arr(p.fuel_px_psi);
+    r.f32arr(p.egt_degf);
+    r.f32arr(p.cht_degf);
+    r.f32arr(p.mp_inhg);
+    r.f32arr(p.tit);
+    r.f32arr(p.oil_temp_degf);
+    r.f32arr(p.oil_px_psi);
+
+    p.num_tanks = r.u32();
+    r.f32arr(p.fuel_quantity_lbs);
+
+    p.num_wheels = r.u32();
+    r.u32arr(p.wow);
+    r.f32arr(p.gear_pos_norm);
+    r.f32arr(p.gear_steer_deg);
+    r.f32arr(p.gear_compression_norm);
+
+    p.cur_time = r.u32();
+    p.warp = r.i32();
+    p.visibility_m = r.f32();
+
+    p.elevator_norm = r.f32();
+    p.elevator_trim_norm = r.f32();
+    p.left_flap_norm = r.f32();
+    p.right_flap_norm = r.f32();
+    p.left_aileron_norm = r.f32();
+    p.right_aileron_norm = r.f32();
+    p.rudder_norm = r.f32();
+    p.nose_wheel_norm = r.f32();
+    p.speedbrake_norm = r.f32();
+    p.spoilers_norm = r.f32();
+
+    // Self-check: the reader must have consumed exactly kPacketSize bytes.
+    // If it didn't, the field list here and in net_fdm.h's FGNetFDM/Packet
+    // don't agree on byte count and every offset past the mismatch is
+    // wrong -- treat that as a decode failure rather than trusting
+    // partially-misaligned data.
+    if (r.ranOff() || r.pos() != net_fdm::kPacketSize) {
+        return net_fdm::DecodeResult::WrongSize;
+    }
+
+    // Same WrongVersion contract as net_fdm::decode(): `out` is still
+    // populated so the two can be compared field-for-field regardless of
+    // which DecodeResult came back.
+    out = p;
+    if (p.version != net_fdm::kVersion) {
+        return net_fdm::DecodeResult::WrongVersion;
+    }
+    return net_fdm::DecodeResult::Ok;
+}
 
 // Appends `v` to `buf` as 4 big-endian bytes.
 void putU32(std::vector<uint8_t>& buf, uint32_t v) {
@@ -314,7 +495,7 @@ int main() {
         net_fdm::Packet viaReader;
         CHECK(net_fdm::decode(valid.data(), valid.size(), viaDecode) ==
               net_fdm::DecodeResult::Ok);
-        CHECK(net_fdm::decodeWithBigEndianReader(valid.data(), valid.size(), viaReader) ==
+        CHECK(decodeWithBigEndianReader(valid.data(), valid.size(), viaReader) ==
               net_fdm::DecodeResult::Ok);
         checkPacketsMatch(viaDecode, viaReader);
     }
@@ -325,7 +506,7 @@ int main() {
         net_fdm::Packet viaReader;
         CHECK(net_fdm::decode(badVersion.data(), badVersion.size(), viaDecode) ==
               net_fdm::DecodeResult::WrongVersion);
-        CHECK(net_fdm::decodeWithBigEndianReader(badVersion.data(), badVersion.size(), viaReader) ==
+        CHECK(decodeWithBigEndianReader(badVersion.data(), badVersion.size(), viaReader) ==
               net_fdm::DecodeResult::WrongVersion);
         checkPacketsMatch(viaDecode, viaReader);
     }
@@ -335,7 +516,7 @@ int main() {
         net_fdm::Packet viaReader;
         CHECK(net_fdm::decode(tooShort.data(), tooShort.size(), viaDecode) ==
               net_fdm::DecodeResult::WrongSize);
-        CHECK(net_fdm::decodeWithBigEndianReader(tooShort.data(), tooShort.size(), viaReader) ==
+        CHECK(decodeWithBigEndianReader(tooShort.data(), tooShort.size(), viaReader) ==
               net_fdm::DecodeResult::WrongSize);
         checkPacketsMatch(viaDecode, viaReader); // both zeroed
     }

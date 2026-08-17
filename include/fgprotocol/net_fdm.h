@@ -9,7 +9,7 @@
  * fginst project's `NetFdm.h` documents; field order/types/units are
  * reproduced here rather than re-derived.
  *
- * Header-only, dependency-free (just `<array>`/`<cstddef>`/`<cstdint>`):
+ * Header-only, dependency-free (just `<algorithm>`/`<array>`/`<cstddef>`/`<cstdint>`):
  * deliberately so this file (and control_wire.h alongside it) can be
  * reused outside this repo -- copy-pasted into another project's include
  * tree, or pulled in via add_subdirectory()/FetchContent against this
@@ -29,6 +29,7 @@
 #ifndef FGPROTOCOL_NET_FDM_H
 #define FGPROTOCOL_NET_FDM_H
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -287,9 +288,7 @@ inline DecodeResult decode(const uint8_t* data, std::size_t size, FGNetFDMRevers
     // in this codebase) -- not a strict-aliasing violation, since uint8_t
     // is always permitted to alias any object's representation.
     uint8_t* dst = reinterpret_cast<uint8_t*>(&out);
-    for (std::size_t i = 0; i < kPacketSize; ++i) {
-        dst[i] = data[kPacketSize - 1 - i];
-    }
+    std::reverse_copy(data, data + kPacketSize, dst);
 
     if (out.version != kVersion) {
         return DecodeResult::WrongVersion;
